@@ -1,10 +1,60 @@
 #!/usr/bin/env python3
 """
-美股智能选股器 v4.0 - 长短线双轨筛选
+美股智能选股器 v5.0 - 长短线双轨筛选 + 量化买卖信号
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 双轨策略:
   [短线] 动量突破 + 量价配合 + 期权异动 + 关键位置
   [长线] 核心资产 + 护城河 + 趋势确认 + 估值安全边际
+
+持有周期定义:
+  ┌──────────────────────────────────────────────────────────────────┐
+  │ 短线: 1~5 个交易日 (最长不超过 10 天)                             │
+  │ 长线: 3~12 个月 (视趋势延续性可适当延长)                          │
+  └──────────────────────────────────────────────────────────────────┘
+
+量化买入信号 (短线, 需满足 ≥3 条):
+  ┌──────────────────────────────────────────────────────────────────┐
+  │ B1. 日线 MACD 金叉       → DIF 上穿 DEA                         │
+  │ B2. 日 RSI(14) ∈ [30,60] → 非超买区，有上升空间                  │
+  │ B3. 当日量比 ≥ 1.5       → 成交放量确认资金进场                  │
+  │ B4. 收盘 > MA5           → 站上 5 日均线                         │
+  │ B5. 突破 10 日最高价     → 短期创新高                            │
+  │ B6. 日 ATR(14)% < 5%     → 波动率可控，止损距离合理              │
+  └──────────────────────────────────────────────────────────────────┘
+
+量化卖出信号 (短线, 满足任一即卖):
+  ┌──────────────────────────────────────────────────────────────────┐
+  │ S1. 盈利 ≥ 2×ATR(14)     → 止盈 (日内波幅 2 倍即落袋)           │
+  │ S2. 亏损 ≥ 1×ATR(14)     → 止损 (最大亏损一个 ATR)              │
+  │ S3. 日 RSI(14) > 75      → 超买, 动量衰竭                      │
+  │ S4. 日线 MACD 死叉       → DIF 下穿 DEA, 短期趋势反转           │
+  │ S5. 收盘 < MA5           → 跌破 5 日均线, 短期趋势走坏           │
+  │ S6. 量价背离             → 价格新高但量 < 前日 70%, 上攻乏力     │
+  │ S7. 持有 > 5 天未达止盈  → 时间止损, 换股操作                    │
+  └──────────────────────────────────────────────────────────────────┘
+
+量化买入信号 (长线, 需满足 ≥4 条):
+  ┌──────────────────────────────────────────────────────────────────┐
+  │ LB1. 周 MACD DIF > 0 且柱状图上升 → 中期趋势向上                 │
+  │ LB2. 周 RSI(14) ∈ [40,65]         → 趋势健康，未过热             │
+  │ LB3. 均线多头 MA5>MA10>MA20>MA60  → 多头排列确认上升通道         │
+  │ LB4. 收盘 > MA60                  → 站稳长期趋势线               │
+  │ LB5. 基本面评分 ≥ 6/10            → 护城河合格                   │
+  │ LB6. ROE > 15%                    → 盈利能力优秀                 │
+  │ LB7. 负债率 < 60%                 → 财务安全                     │
+  │ LB8. PEG < 2 或 PE < 25           → 估值合理有成长               │
+  └──────────────────────────────────────────────────────────────────┘
+
+量化卖出信号 (长线, 满足任一即卖):
+  ┌──────────────────────────────────────────────────────────────────┐
+  │ LS1. 周线 MACD 死叉              → DIF 下穿 DEA, 中期趋势反转   │
+  │ LS2. 周 RSI(14) > 80             → 严重超买, 获利了结             │
+  │ LS3. 收盘跌破 MA60 且 3 日未收回 → 长期趋势线失守                │
+  │ LS4. 均线空头 MA5<MA10<MA20      → 空头排列, 趋势全面转弱        │
+  │ LS5. 连续 2 季 ROE 下降 > 30%    → 基本面恶化                   │
+  │ LS6. 总亏损 ≥ 15%                → 硬止损, 无条件离场             │
+  │ LS7. 总盈利 ≥ 50% 减仓 50%       → 分批止盈, 锁定利润            │
+  └──────────────────────────────────────────────────────────────────┘
 
 八大维度:
   [信号面] 盘前异动 | 财报日历 | 分析师评级 | 期权异动
@@ -70,6 +120,48 @@ TECH_RSI_OVERBOUGHT = 75
 # 短线阈值
 SHORT_VOL_RATIO_MIN = 1.5         # 短线要求量比 > 1.5
 SHORT_BREAKOUT_PCT = 0.02         # 突破前高2%算有效突破
+
+# ─── 持有周期 & 量化买卖信号阈值 ─────────────────────────────────────
+# 短线持有周期
+SHORT_HOLD_DAYS_MIN = 1            # 最短1个交易日
+SHORT_HOLD_DAYS_MAX = 5            # 建议最长5个交易日
+SHORT_HOLD_DAYS_HARD = 10          # 绝对上限10天
+
+# 长线持有周期
+LONG_HOLD_MONTHS_MIN = 3           # 最短3个月
+LONG_HOLD_MONTHS_MAX = 12          # 建议最长12个月
+
+# ── 短线买入信号阈值 ──
+SHORT_BUY_RSI_LOW = 30             # 日RSI下限
+SHORT_BUY_RSI_HIGH = 60            # 日RSI上限
+SHORT_BUY_VOL_RATIO = 1.5          # 量比 ≥ 1.5
+SHORT_BUY_ATR_PCT_MAX = 5.0        # ATR% < 5% (波动率可控)
+SHORT_BUY_BREAKOUT_DAYS = 10       # 突破N日最高价
+SHORT_BUY_MIN_SIGNALS = 3          # 至少满足N条才可买入
+
+# ── 短线卖出信号阈值 ──
+SHORT_SELL_TP_ATR_MULT = 2.0       # 止盈 = 买入价 + 2×ATR
+SHORT_SELL_SL_ATR_MULT = 1.0       # 止损 = 买入价 - 1×ATR
+SHORT_SELL_RSI_OVERBOUGHT = 75     # RSI > 75 超买即卖
+SHORT_SELL_VOL_DIVERGE = 0.70      # 量价背离: 量 < 前日70%
+SHORT_SELL_TIME_DAYS = 5           # 超过5天未达止盈即走
+
+# ── 长线买入信号阈值 ──
+LONG_BUY_W_RSI_LOW = 40            # 周RSI下限
+LONG_BUY_W_RSI_HIGH = 65           # 周RSI上限
+LONG_BUY_MOAT_MIN = 6              # 基本面评分 ≥ 6/10
+LONG_BUY_ROE_MIN = 0.15            # ROE > 15%
+LONG_BUY_DEBT_MAX = 0.60           # 负债率 < 60%
+LONG_BUY_PEG_MAX = 2.0             # PEG < 2
+LONG_BUY_PE_MAX = 25               # PE < 25
+LONG_BUY_MIN_SIGNALS = 4           # 至少满足N条才可买入
+
+# ── 长线卖出信号阈值 ──
+LONG_SELL_W_RSI_OVERBOUGHT = 80    # 周RSI > 80 严重超买
+LONG_SELL_MA60_BREAK_DAYS = 3      # 跌破MA60后N日未收回
+LONG_SELL_HARD_SL_PCT = 0.15       # 总亏损 ≥ 15% 硬止损
+LONG_SELL_TP_REDUCE_PCT = 0.50     # 总盈利 ≥ 50% 减仓50%
+LONG_SELL_ROE_DECLINE_PCT = 0.30   # ROE连续下降 > 30%
 
 # ─── 公司信息库 (中文名 | 英文全称 | 大白话简介) ──────────────────────
 # 格式: "TICKER": ("中文名", "English Full Name", "一句话说清楚干啥的")
@@ -760,6 +852,191 @@ def detect_volume_breakout(volumes, closes, lookback=10):
             return True, vol_ratio
 
     return False, vol_ratio
+
+
+def generate_short_signals(d_closes, d_highs, d_lows, d_volumes, d_opens,
+                           d_rsi, d_dif, d_dea, d_hist,
+                           ma5, atr, atr_pct, cur_price):
+    """
+    生成短线量化买入/卖出信号
+    返回 (buy_signals: list[str], sell_signals: list[str], buy_count: int, sell_count: int)
+    """
+    buy_signals = []
+    sell_signals = []
+
+    if not d_closes or len(d_closes) < 10 or cur_price <= 0:
+        return buy_signals, sell_signals, 0, 0
+
+    # ══ 短线买入信号 ══
+    # B1. 日线 MACD 金叉 (DIF 上穿 DEA)
+    if d_dif and d_dea and len(d_dif) >= 2 and len(d_dea) >= 2:
+        if d_dif[-1] > d_dea[-1] and d_dif[-2] <= d_dea[-2]:
+            buy_signals.append("B1.日线MACD金叉(DIF上穿DEA)")
+
+    # B2. 日 RSI(14) ∈ [30, 60]
+    if d_rsi is not None and SHORT_BUY_RSI_LOW <= d_rsi <= SHORT_BUY_RSI_HIGH:
+        buy_signals.append(f"B2.日RSI={d_rsi:.0f}∈[{SHORT_BUY_RSI_LOW},{SHORT_BUY_RSI_HIGH}]")
+
+    # B3. 当日量比 ≥ 1.5
+    recent_vols = [v for v in d_volumes[-11:-1] if v is not None]
+    cur_vol = d_volumes[-1] if d_volumes[-1] is not None else 0
+    avg_vol = sum(recent_vols) / len(recent_vols) if recent_vols else 1
+    day_vol_ratio = cur_vol / max(avg_vol, 1)
+    if day_vol_ratio >= SHORT_BUY_VOL_RATIO:
+        buy_signals.append(f"B3.量比{day_vol_ratio:.1f}x≥{SHORT_BUY_VOL_RATIO}")
+
+    # B4. 收盘 > MA5 (站上5日均线)
+    cur_ma5 = ma5[-1] if ma5 and ma5[-1] else 0
+    if cur_ma5 > 0 and cur_price > cur_ma5:
+        buy_signals.append(f"B4.收盘{cur_price:.1f}>MA5({cur_ma5:.1f})")
+
+    # B5. 突破10日最高价
+    recent_highs = [h for h in d_highs[-SHORT_BUY_BREAKOUT_DAYS - 1:-1] if h is not None]
+    if recent_highs:
+        high_10d = max(recent_highs)
+        if cur_price > high_10d:
+            buy_signals.append(f"B5.突破{SHORT_BUY_BREAKOUT_DAYS}日高{high_10d:.1f}")
+
+    # B6. ATR% < 5% (波动率可控)
+    if atr_pct is not None and 0 < atr_pct < SHORT_BUY_ATR_PCT_MAX:
+        buy_signals.append(f"B6.ATR%={atr_pct:.1f}%<{SHORT_BUY_ATR_PCT_MAX}%")
+
+    # ══ 短线卖出信号 ══
+    # S1. 止盈位: 买入价 + 2×ATR (输出参考价位)
+    if atr and atr > 0:
+        tp_price = cur_price + SHORT_SELL_TP_ATR_MULT * atr
+        sell_signals.append(f"S1.止盈参考${tp_price:.2f}(+{SHORT_SELL_TP_ATR_MULT}×ATR)")
+
+    # S2. 止损位: 买入价 - 1×ATR
+    if atr and atr > 0:
+        sl_price = cur_price - SHORT_SELL_SL_ATR_MULT * atr
+        sell_signals.append(f"S2.止损参考${sl_price:.2f}(-{SHORT_SELL_SL_ATR_MULT}×ATR)")
+
+    # S3. RSI > 75 超买
+    if d_rsi is not None and d_rsi > SHORT_SELL_RSI_OVERBOUGHT:
+        sell_signals.append(f"S3.⚠日RSI={d_rsi:.0f}>{SHORT_SELL_RSI_OVERBOUGHT}超买")
+
+    # S4. 日线 MACD 死叉
+    if d_dif and d_dea and len(d_dif) >= 2 and len(d_dea) >= 2:
+        if d_dif[-1] < d_dea[-1] and d_dif[-2] >= d_dea[-2]:
+            sell_signals.append("S4.⚠日线MACD死叉(DIF下穿DEA)")
+
+    # S5. 收盘 < MA5
+    if cur_ma5 > 0 and cur_price < cur_ma5:
+        sell_signals.append(f"S5.⚠收盘{cur_price:.1f}<MA5({cur_ma5:.1f})")
+
+    # S6. 量价背离 (价格涨但量缩 < 前日70%)
+    if (len(d_closes) >= 2 and len(d_volumes) >= 2
+            and d_closes[-1] is not None and d_closes[-2] is not None
+            and d_volumes[-1] is not None and d_volumes[-2] is not None
+            and d_volumes[-2] > 0):
+        if d_closes[-1] > d_closes[-2]:  # 价格上涨
+            vol_shrink = d_volumes[-1] / d_volumes[-2]
+            if vol_shrink < SHORT_SELL_VOL_DIVERGE:
+                sell_signals.append(f"S6.⚠量价背离(量缩至{vol_shrink:.0%})")
+
+    # S7. 持有超时 (提示性)
+    sell_signals.append(f"S7.持有>{SHORT_SELL_TIME_DAYS}天未达止盈→时间止损")
+
+    buy_count = len(buy_signals)
+    # sell_signals 中 S1/S2/S7 是参考线不算触发, 只计 ⚠ 开头的
+    sell_triggered = sum(1 for s in sell_signals if "⚠" in s)
+
+    return buy_signals, sell_signals, buy_count, sell_triggered
+
+
+def generate_long_signals(w_closes, w_dif, w_dea, w_hist, w_rsi,
+                          d_closes, ma5, ma10, ma20, ma60,
+                          cur_price, moat_score, moat_flags):
+    """
+    生成长线量化买入/卖出信号
+    返回 (buy_signals: list[str], sell_signals: list[str], buy_count: int, sell_count: int)
+    """
+    buy_signals = []
+    sell_signals = []
+
+    if not w_closes or not d_closes or cur_price <= 0:
+        return buy_signals, sell_signals, 0, 0
+
+    cur_ma5 = ma5[-1] if ma5 and ma5[-1] else 0
+    cur_ma10 = ma10[-1] if ma10 and ma10[-1] else 0
+    cur_ma20 = ma20[-1] if ma20 and ma20[-1] else 0
+    cur_ma60 = ma60[-1] if ma60 and ma60[-1] else 0
+
+    # ══ 长线买入信号 ══
+    # LB1. 周 MACD DIF > 0 且柱状图上升
+    if w_dif and w_hist and len(w_dif) >= 1 and len(w_hist) >= 2:
+        if w_dif[-1] > 0 and w_hist[-1] > w_hist[-2]:
+            buy_signals.append(f"LB1.周MACD·DIF={w_dif[-1]:.2f}>0且柱升")
+
+    # LB2. 周 RSI(14) ∈ [40, 65]
+    if w_rsi is not None and LONG_BUY_W_RSI_LOW <= w_rsi <= LONG_BUY_W_RSI_HIGH:
+        buy_signals.append(f"LB2.周RSI={w_rsi:.0f}∈[{LONG_BUY_W_RSI_LOW},{LONG_BUY_W_RSI_HIGH}]")
+
+    # LB3. 均线多头排列 MA5>MA10>MA20>MA60
+    if all([cur_ma5, cur_ma10, cur_ma20, cur_ma60]):
+        if cur_ma5 > cur_ma10 > cur_ma20 > cur_ma60:
+            buy_signals.append(f"LB3.均线多头MA5>MA10>MA20>MA60")
+
+    # LB4. 收盘 > MA60 (站稳长期趋势线)
+    if cur_ma60 > 0 and cur_price > cur_ma60:
+        buy_signals.append(f"LB4.收盘{cur_price:.1f}>MA60({cur_ma60:.1f})")
+
+    # LB5. 基本面评分 ≥ 6/10
+    if moat_score is not None and moat_score >= LONG_BUY_MOAT_MIN:
+        buy_signals.append(f"LB5.护城河{moat_score}/10≥{LONG_BUY_MOAT_MIN}")
+
+    # LB6. ROE > 15%
+    roe = moat_flags.get("roe") if moat_flags else None
+    if roe is not None and roe >= LONG_BUY_ROE_MIN:
+        buy_signals.append(f"LB6.ROE={roe*100:.1f}%>{LONG_BUY_ROE_MIN*100:.0f}%")
+
+    # LB7. 负债率 < 60%
+    debt = moat_flags.get("debt_ratio") if moat_flags else None
+    if debt is not None and debt <= LONG_BUY_DEBT_MAX:
+        buy_signals.append(f"LB7.负债率{debt*100:.0f}%<{LONG_BUY_DEBT_MAX*100:.0f}%")
+
+    # LB8. PEG < 2 或 PE < 25
+    peg = moat_flags.get("peg") if moat_flags else None
+    pe = moat_flags.get("pe") if moat_flags else None
+    if peg is not None and 0 < peg <= LONG_BUY_PEG_MAX:
+        buy_signals.append(f"LB8.PEG={peg:.1f}≤{LONG_BUY_PEG_MAX}")
+    elif pe is not None and 0 < pe <= LONG_BUY_PE_MAX:
+        buy_signals.append(f"LB8.PE={pe:.1f}≤{LONG_BUY_PE_MAX}")
+
+    # ══ 长线卖出信号 ══
+    # LS1. 周线 MACD 死叉
+    if w_dif and w_dea and len(w_dif) >= 2 and len(w_dea) >= 2:
+        if w_dif[-1] < w_dea[-1] and w_dif[-2] >= w_dea[-2]:
+            sell_signals.append("LS1.⚠周线MACD死叉(DIF下穿DEA)")
+
+    # LS2. 周 RSI > 80
+    if w_rsi is not None and w_rsi > LONG_SELL_W_RSI_OVERBOUGHT:
+        sell_signals.append(f"LS2.⚠周RSI={w_rsi:.0f}>{LONG_SELL_W_RSI_OVERBOUGHT}严重超买")
+
+    # LS3. 收盘跌破MA60 (提示)
+    if cur_ma60 > 0 and cur_price < cur_ma60:
+        pct_below = (cur_ma60 - cur_price) / cur_ma60 * 100
+        sell_signals.append(f"LS3.⚠跌破MA60({cur_ma60:.1f}),偏离{pct_below:.1f}%,{LONG_SELL_MA60_BREAK_DAYS}日未收回则离场")
+
+    # LS4. 均线空头排列 MA5<MA10<MA20
+    if all([cur_ma5, cur_ma10, cur_ma20]):
+        if cur_ma5 < cur_ma10 < cur_ma20:
+            sell_signals.append("LS4.⚠均线空头MA5<MA10<MA20")
+
+    # LS5. ROE 恶化 (提示性, 需关注季报)
+    sell_signals.append(f"LS5.关注:连续2季ROE下降>{LONG_SELL_ROE_DECLINE_PCT*100:.0f}%需离场")
+
+    # LS6. 硬止损 -15%
+    sell_signals.append(f"LS6.硬止损:总亏损≥{LONG_SELL_HARD_SL_PCT*100:.0f}%无条件离场")
+
+    # LS7. 止盈减仓 +50%
+    sell_signals.append(f"LS7.止盈:盈利≥{LONG_SELL_TP_REDUCE_PCT*100:.0f}%减仓50%锁定利润")
+
+    buy_count = len(buy_signals)
+    sell_triggered = sum(1 for s in sell_signals if "⚠" in s)
+
+    return buy_signals, sell_signals, buy_count, sell_triggered
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -1492,10 +1769,10 @@ def fetch_technicals(tickers):
             entry_signal = "强势突破+趋势确认, 可重仓"
         elif short_score >= 3:
             trade_type = "短线"
-            entry_signal = "量价突破, 快进快出"
+            entry_signal = f"量价突破, 建议持有{SHORT_HOLD_DAYS_MIN}-{SHORT_HOLD_DAYS_MAX}天"
         elif long_score >= 3:
             trade_type = "长线"
-            entry_signal = "趋势良好, 逢低布局"
+            entry_signal = f"趋势良好, 建议持有{LONG_HOLD_MONTHS_MIN}-{LONG_HOLD_MONTHS_MAX}个月"
         elif w_rsi < TECH_RSI_OVERSOLD or (d_rsi and d_rsi < 30):
             trade_type = "抄底观察"
             entry_signal = "超卖区间, 关注企稳信号"
@@ -1508,6 +1785,33 @@ def fetch_technicals(tickers):
                 stop_loss = nearest_support * 0.98  # 支撑位下方2%
         if stop_loss is None and atr and cur_price > 0:
             stop_loss = cur_price - 2 * atr  # 2ATR 止损
+
+        # ══ 生成量化买卖信号 ══
+        short_buy_sigs, short_sell_sigs, short_buy_n, short_sell_n = generate_short_signals(
+            d_closes, d_highs, d_lows, d_volumes, d_opens,
+            d_rsi, d_dif, d_dea, d_hist if d_hist else [],
+            ma5, atr, atr_pct, cur_price
+        )
+        # 长线信号先传空的 moat 信息, 后面在评分引擎中补全
+        long_buy_sigs, long_sell_sigs, long_buy_n, long_sell_n = generate_long_signals(
+            w_closes, w_dif, w_dea, w_hist, w_rsi,
+            d_closes, ma5, ma10, ma20, ma60,
+            cur_price, None, {}
+        )
+
+        # 判断信号是否足够
+        short_buy_ok = short_buy_n >= SHORT_BUY_MIN_SIGNALS
+        long_buy_ok = long_buy_n >= LONG_BUY_MIN_SIGNALS
+
+        # 持有周期建议
+        if trade_type == "短线":
+            hold_period = f"{SHORT_HOLD_DAYS_MIN}-{SHORT_HOLD_DAYS_MAX}天(上限{SHORT_HOLD_DAYS_HARD}天)"
+        elif trade_type == "长线":
+            hold_period = f"{LONG_HOLD_MONTHS_MIN}-{LONG_HOLD_MONTHS_MAX}个月"
+        elif trade_type == "长短皆宜":
+            hold_period = f"短:{SHORT_HOLD_DAYS_MIN}-{SHORT_HOLD_DAYS_MAX}天 / 长:{LONG_HOLD_MONTHS_MIN}-{LONG_HOLD_MONTHS_MAX}月"
+        else:
+            hold_period = "暂不建议"
 
         return {
             "ticker": ticker,
@@ -1525,13 +1829,38 @@ def fetch_technicals(tickers):
             "at_support": at_support,
             "trade_type": trade_type,
             "entry_signal": entry_signal,
+            "hold_period": hold_period,
             "short_score": short_score,
             "long_score": long_score,
             "stop_loss": round(stop_loss, 2) if stop_loss else None,
+            "atr": atr,
             "atr_pct": round(atr_pct, 2),
             "tech_details": details,
             "trade_signals": trade_signals,
             "signal": " | ".join(details),
+            # 量化买卖信号
+            "short_buy_signals": short_buy_sigs,
+            "short_sell_signals": short_sell_sigs,
+            "short_buy_count": short_buy_n,
+            "short_sell_triggered": short_sell_n,
+            "short_buy_ok": short_buy_ok,
+            "long_buy_signals": long_buy_sigs,
+            "long_sell_signals": long_sell_sigs,
+            "long_buy_count": long_buy_n,
+            "long_sell_triggered": long_sell_n,
+            "long_buy_ok": long_buy_ok,
+            # 原始数据供后续补全长线信号
+            "w_closes": w_closes,
+            "w_dif": w_dif,
+            "w_dea": w_dea,
+            "w_hist": w_hist,
+            "w_rsi": w_rsi,
+            "d_closes": d_closes,
+            "ma5_arr": ma5,
+            "ma10_arr": ma10,
+            "ma20_arr": ma20,
+            "ma60_arr": ma60,
+            "cur_price": cur_price,
         }
 
     with ThreadPoolExecutor(max_workers=6) as pool:
@@ -1620,11 +1949,11 @@ def fetch_money_flow(tickers, all_quotes):
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# 综合评分引擎 v4 - 长短线双轨
+# 综合评分引擎 v5 - 长短线双轨 + 量化买卖信号
 # ═══════════════════════════════════════════════════════════════════════
 def score_and_rank(premarket, earnings, analyst, options, fundamentals, technicals, money_flow, all_quotes):
     """
-    七维度综合评分 + 长短线分类
+    七维度综合评分 + 长短线分类 + 量化买入/卖出信号 + 持有周期建议
     """
     all_tickers = set()
     all_tickers.update(premarket.keys(), earnings.keys(), analyst.keys(), options.keys())
@@ -1650,7 +1979,6 @@ def score_and_rank(premarket, earnings, analyst, options, fundamentals, technica
             if change > 10: s += 2
             elif change > 5: s += 1
             if info.get("vol_ratio", 0) > 2: s += 1
-            # 接近52周新高加分
             if info.get("pct_from_high", -100) > -5: s += 1
             score += s
             reasons.append(f"📈 {info['signal']}")
@@ -1713,6 +2041,7 @@ def score_and_rank(premarket, earnings, analyst, options, fundamentals, technica
             trade_type = t_info.get("trade_type", "观望")
             entry = t_info.get("entry_signal", "")
             stop = t_info.get("stop_loss")
+            hold = t_info.get("hold_period", "")
             stop_str = f" | 止损:${stop}" if stop else ""
 
             if ts >= 5:
@@ -1726,6 +2055,8 @@ def score_and_rank(premarket, earnings, analyst, options, fundamentals, technica
 
             if entry:
                 reasons.append(f"   💡 操作建议: {entry}")
+            if hold:
+                reasons.append(f"   ⏱️ 建议持有: {hold}")
 
         # ── 资金面 ──
         if ticker in money_flow:
@@ -1745,6 +2076,61 @@ def score_and_rank(premarket, earnings, analyst, options, fundamentals, technica
             score += 2
             reasons.append(f"✦ {dimensions}维信号共振")
 
+        # ── 补全长线量化信号 (需要基本面数据) ──
+        t_info = technicals.get(ticker, {})
+        f_info = fundamentals.get(ticker, {})
+        moat_score_val = f_info.get("moat_score")
+        moat_flags = f_info.get("moat_flags", {})
+
+        # 用基本面数据重新生成完整的长线信号
+        if t_info and t_info.get("w_closes"):
+            long_buy_sigs, long_sell_sigs, long_buy_n, long_sell_n = generate_long_signals(
+                t_info["w_closes"], t_info["w_dif"], t_info["w_dea"],
+                t_info["w_hist"], t_info["w_rsi"],
+                t_info["d_closes"],
+                t_info["ma5_arr"], t_info["ma10_arr"],
+                t_info["ma20_arr"], t_info["ma60_arr"],
+                t_info["cur_price"],
+                moat_score_val, moat_flags
+            )
+            long_buy_ok = long_buy_n >= LONG_BUY_MIN_SIGNALS
+        else:
+            long_buy_sigs, long_sell_sigs = [], []
+            long_buy_n, long_sell_n, long_buy_ok = 0, 0, False
+
+        short_buy_sigs = t_info.get("short_buy_signals", [])
+        short_sell_sigs = t_info.get("short_sell_signals", [])
+        short_buy_n = t_info.get("short_buy_count", 0)
+        short_sell_n = t_info.get("short_sell_triggered", 0)
+        short_buy_ok = t_info.get("short_buy_ok", False)
+
+        # ── 量化买入信号输出 ──
+        trade_type = t_info.get("trade_type", "观望")
+
+        if trade_type in ("短线", "长短皆宜"):
+            buy_status = "✅可买" if short_buy_ok else "❌不足"
+            reasons.append(f"   🟢 短线买入信号({short_buy_n}/{SHORT_BUY_MIN_SIGNALS}条){buy_status}:")
+            for sig in short_buy_sigs:
+                reasons.append(f"      {sig}")
+            if short_sell_n > 0:
+                reasons.append(f"   🔴 短线卖出预警({short_sell_n}条已触发):")
+            else:
+                reasons.append(f"   🔴 短线卖出条件(参考):")
+            for sig in short_sell_sigs:
+                reasons.append(f"      {sig}")
+
+        if trade_type in ("长线", "长短皆宜"):
+            buy_status = "✅可买" if long_buy_ok else "❌不足"
+            reasons.append(f"   🟢 长线买入信号({long_buy_n}/{LONG_BUY_MIN_SIGNALS}条){buy_status}:")
+            for sig in long_buy_sigs:
+                reasons.append(f"      {sig}")
+            if long_sell_n > 0:
+                reasons.append(f"   🔴 长线卖出预警({long_sell_n}条已触发):")
+            else:
+                reasons.append(f"   🔴 长线卖出条件(参考):")
+            for sig in long_sell_sigs:
+                reasons.append(f"      {sig}")
+
         # ── 补充 detail ──
         cn_name = get_company_short(ticker)
         if ticker in all_quotes and "name" not in detail:
@@ -1757,18 +2143,20 @@ def score_and_rank(premarket, earnings, analyst, options, fundamentals, technica
         elif cn_name and "name" in detail:
             detail["name"] = cn_name
 
-        # 交易类型
-        trade_type = technicals.get(ticker, {}).get("trade_type", "观望")
-
         scored.append({
             "ticker": ticker, "score": round(score, 1), "dimensions": dimensions,
             "reasons": reasons,
             "moat_score": fundamentals.get(ticker, {}).get("moat_score", 0),
             "tech_score": technicals.get(ticker, {}).get("tech_score", 0),
             "trade_type": trade_type,
-            "short_score": technicals.get(ticker, {}).get("short_score", 0),
-            "long_score": technicals.get(ticker, {}).get("long_score", 0),
-            "stop_loss": technicals.get(ticker, {}).get("stop_loss"),
+            "hold_period": t_info.get("hold_period", "暂不建议"),
+            "short_score": t_info.get("short_score", 0),
+            "long_score": t_info.get("long_score", 0),
+            "short_buy_ok": short_buy_ok,
+            "long_buy_ok": long_buy_ok,
+            "short_buy_count": short_buy_n,
+            "long_buy_count": long_buy_n,
+            "stop_loss": t_info.get("stop_loss"),
             **detail,
         })
 
@@ -1817,12 +2205,14 @@ def _print_rich(top_stocks, short_term, long_term, market_state):
 
     console.print()
     if narrow:
-        console.print(f"[bold cyan]美股选股 v4.0[/bold cyan] | {state_label}")
+        console.print(f"[bold cyan]美股选股 v5.0[/bold cyan] | {state_label}")
         console.print(f"[dim]{datetime.now().strftime('%Y-%m-%d %H:%M')}[/dim]")
     else:
         console.print(Panel.fit(
-            f"[bold cyan]美股智能选股 v4.0 - 长短线双轨筛选[/bold cyan]\n"
+            f"[bold cyan]美股智能选股 v5.0 - 长短线双轨 + 量化买卖信号[/bold cyan]\n"
             f"[dim]{datetime.now().strftime('%Y-%m-%d %H:%M')} | {state_label}[/dim]\n"
+            f"[dim]短线: {SHORT_HOLD_DAYS_MIN}-{SHORT_HOLD_DAYS_MAX}天 | 长线: {LONG_HOLD_MONTHS_MIN}-{LONG_HOLD_MONTHS_MAX}月 | "
+            f"短线买入≥{SHORT_BUY_MIN_SIGNALS}条 | 长线买入≥{LONG_BUY_MIN_SIGNALS}条[/dim]\n"
             f"[dim]口诀: ROE>15% | 毛利>30% | 负债<60% | 现金>90% | PE合理 | MACD零上扬 | RSI 40-70 | 均线多头 | 放量突破[/dim]",
             border_style="cyan",
         ))
@@ -1840,7 +2230,7 @@ def _print_rich(top_stocks, short_term, long_term, market_state):
 
     # ── 短线机会 ──
     if short_term:
-        console.print(f"\n[bold red]━━━ 短线交易机会 (快进快出) ━━━[/bold red]")
+        console.print(f"\n[bold red]━━━ 短线交易机会 (持有{SHORT_HOLD_DAYS_MIN}-{SHORT_HOLD_DAYS_MAX}天, 上限{SHORT_HOLD_DAYS_HARD}天) ━━━[/bold red]")
         table = Table(show_header=True, header_style="bold red", show_lines=True, expand=True)
         table.add_column("#", style="dim", width=3, justify="center")
         table.add_column("代码", style="bold cyan", width=6, no_wrap=True)
@@ -1851,8 +2241,8 @@ def _print_rich(top_stocks, short_term, long_term, market_state):
         table.add_column("涨跌", justify="right", width=7)
         if not narrow:
             table.add_column("止损", justify="right", width=8)
-            table.add_column("类型", justify="center", width=6)
-        table.add_column("买入理由", ratio=1, overflow="fold")
+            table.add_column("买信号", justify="center", width=6)
+        table.add_column("买卖信号 & 理由", ratio=1, overflow="fold")
 
         for i, s in enumerate(short_term, 1):
             sc = s.get("score", 0)
@@ -1861,8 +2251,9 @@ def _print_rich(top_stocks, short_term, long_term, market_state):
             chg_str = fmt_pct(chg) if chg else "N/A"
             chg_color = "green" if (chg or 0) > 0 else "red" if (chg or 0) < 0 else "white"
             stop = f"${s['stop_loss']}" if s.get("stop_loss") else "N/A"
-            trade_color = "bold magenta" if s["trade_type"] == "长短皆宜" else "red"
-            max_lines = 2 if compact else 4
+            buy_n = s.get("short_buy_count", 0)
+            buy_ok = s.get("short_buy_ok", False)
+            buy_label = f"[bold green]{buy_n}/{SHORT_BUY_MIN_SIGNALS}✅[/bold green]" if buy_ok else f"[yellow]{buy_n}/{SHORT_BUY_MIN_SIGNALS}❌[/yellow]"
 
             row = [str(i), s["ticker"]]
             if not narrow:
@@ -1872,14 +2263,14 @@ def _print_rich(top_stocks, short_term, long_term, market_state):
             row.append(f"[{chg_color}]{chg_str}[/{chg_color}]")
             if not narrow:
                 row.append(stop)
-                row.append(f"[{trade_color}]{s['trade_type']}[/{trade_color}]")
-            row.append(_truncate_reasons(s.get("reasons", []), max_lines))
+                row.append(buy_label)
+            row.append(_truncate_reasons(s.get("reasons", []), 8 if not compact else 4))
             table.add_row(*row)
         console.print(table)
 
     # ── 长线布局 ──
     if long_term:
-        console.print(f"\n[bold blue]━━━ 长线价值布局 (逢低配置) ━━━[/bold blue]")
+        console.print(f"\n[bold blue]━━━ 长线价值布局 (持有{LONG_HOLD_MONTHS_MIN}-{LONG_HOLD_MONTHS_MAX}个月) ━━━[/bold blue]")
         table = Table(show_header=True, header_style="bold blue", show_lines=True, expand=True)
         table.add_column("#", style="dim", width=3, justify="center")
         table.add_column("代码", style="bold cyan", width=6, no_wrap=True)
@@ -1891,9 +2282,8 @@ def _print_rich(top_stocks, short_term, long_term, market_state):
             table.add_column("技术", justify="center", width=5)
         table.add_column("价格", justify="right", width=8)
         if not narrow:
-            table.add_column("市值", justify="right", width=6)
-            table.add_column("类型", justify="center", width=6)
-        table.add_column("布局理由", ratio=1, overflow="fold")
+            table.add_column("买信号", justify="center", width=6)
+        table.add_column("买卖信号 & 理由", ratio=1, overflow="fold")
 
         for i, s in enumerate(long_term, 1):
             sc = s.get("score", 0)
@@ -1902,8 +2292,9 @@ def _print_rich(top_stocks, short_term, long_term, market_state):
             moat_color = "bold green" if moat >= 8 else "green" if moat >= 6 else "yellow" if moat >= 4 else "red"
             tech = s.get("tech_score", 0)
             tech_color = "green" if tech >= 4 else "yellow" if tech >= 2 else "red"
-            trade_color = "bold magenta" if s["trade_type"] == "长短皆宜" else "blue"
-            max_lines = 2 if compact else 4
+            buy_n = s.get("long_buy_count", 0)
+            buy_ok = s.get("long_buy_ok", False)
+            buy_label = f"[bold green]{buy_n}/{LONG_BUY_MIN_SIGNALS}✅[/bold green]" if buy_ok else f"[yellow]{buy_n}/{LONG_BUY_MIN_SIGNALS}❌[/yellow]"
 
             row = [str(i), s["ticker"]]
             if not narrow:
@@ -1914,9 +2305,8 @@ def _print_rich(top_stocks, short_term, long_term, market_state):
                 row.append(f"[{tech_color}]{tech:.1f}[/{tech_color}]")
             row.append(s.get("price", "N/A"))
             if not narrow:
-                row.append(fmt_num(s.get("market_cap", 0)))
-                row.append(f"[{trade_color}]{s['trade_type']}[/{trade_color}]")
-            row.append(_truncate_reasons(s.get("reasons", []), max_lines))
+                row.append(buy_label)
+            row.append(_truncate_reasons(s.get("reasons", []), 8 if not compact else 4))
             table.add_row(*row)
         console.print(table)
 
@@ -1935,7 +2325,8 @@ def _print_rich(top_stocks, short_term, long_term, market_state):
     table.add_column("涨跌", justify="right", width=7)
     if not narrow:
         table.add_column("类型", justify="center", width=6)
-    table.add_column("买入理由", ratio=1, overflow="fold")
+        table.add_column("持有周期", justify="center", width=10)
+    table.add_column("买卖信号 & 理由", ratio=1, overflow="fold")
 
     for i, s in enumerate(top_stocks, 1):
         sc = s.get("score", 0)
@@ -1962,38 +2353,45 @@ def _print_rich(top_stocks, short_term, long_term, market_state):
         row.append(f"[{chg_color}]{chg_str}[/{chg_color}]")
         if not narrow:
             row.append(f"[{tt_color}]{tt}[/{tt_color}]")
+            row.append(s.get("hold_period", "暂不建议")[:12])
         row.append(_truncate_reasons(s.get("reasons", []), max_lines))
         table.add_row(*row)
 
     console.print(table)
     console.print()
     console.print("[dim italic]⚠️  数据仅供参考，不构成投资建议。核心资产筛选基于历史数据，不代表未来表现。[/dim italic]")
-    console.print("[dim italic]💡 短线: 设置严格止损, 量价背离即出; 长线: 分批建仓, 跌破MA60减仓[/dim italic]")
+    console.print(f"[dim italic]💡 短线: 买入≥{SHORT_BUY_MIN_SIGNALS}条信号, 持有{SHORT_HOLD_DAYS_MIN}-{SHORT_HOLD_DAYS_MAX}天, 止盈+{SHORT_SELL_TP_ATR_MULT}ATR/止损-{SHORT_SELL_SL_ATR_MULT}ATR, RSI>{SHORT_SELL_RSI_OVERBOUGHT}即卖[/dim italic]")
+    console.print(f"[dim italic]💡 长线: 买入≥{LONG_BUY_MIN_SIGNALS}条信号, 持有{LONG_HOLD_MONTHS_MIN}-{LONG_HOLD_MONTHS_MAX}月, 跌破MA60且{LONG_SELL_MA60_BREAK_DAYS}日未收回离场, 亏{LONG_SELL_HARD_SL_PCT*100:.0f}%硬止损, 赚{LONG_SELL_TP_REDUCE_PCT*100:.0f}%减仓[/dim italic]")
     console.print()
 
 
 def _print_plain(top_stocks, short_term, long_term, market_state):
     print(f"\n{'═' * 100}")
-    print(f"  美股智能选股 v4.0 - 长短线双轨筛选  |  {datetime.now().strftime('%Y-%m-%d %H:%M')}  |  {market_state}")
+    print(f"  美股智能选股 v5.0 - 长短线双轨 + 量化买卖信号  |  {datetime.now().strftime('%Y-%m-%d %H:%M')}  |  {market_state}")
+    print(f"  短线: {SHORT_HOLD_DAYS_MIN}-{SHORT_HOLD_DAYS_MAX}天 | 长线: {LONG_HOLD_MONTHS_MIN}-{LONG_HOLD_MONTHS_MAX}月")
     print(f"  口诀: ROE>15% | 毛利>30% | 负债<60% | 现金>90% | PE合理 | MACD零上扬 | RSI 40-70 | 均线多头 | 放量突破")
     print(f"{'═' * 100}")
 
     if short_term:
-        print(f"\n{'━' * 50} 短线交易机会 {'━' * 50}")
+        print(f"\n{'━' * 50} 短线交易 (持有{SHORT_HOLD_DAYS_MIN}-{SHORT_HOLD_DAYS_MAX}天) {'━' * 30}")
         for i, s in enumerate(short_term, 1):
             chg = fmt_pct(s.get('change_pct')) if s.get('change_pct') else 'N/A'
             stop = f"${s['stop_loss']}" if s.get("stop_loss") else "N/A"
+            buy_n = s.get("short_buy_count", 0)
+            buy_ok = "✅" if s.get("short_buy_ok") else "❌"
             print(f"\n  #{i}  {s['ticker']:<6} {s.get('name','')[:12]:<12}  总分:{s.get('score',0):>5}  "
-                  f"涨跌:{chg:>8}  止损:{stop}  [{s['trade_type']}]")
-            for reason in s.get("reasons", [])[:3]:
+                  f"涨跌:{chg:>8}  止损:{stop}  买信号:{buy_n}/{SHORT_BUY_MIN_SIGNALS}{buy_ok}")
+            for reason in s.get("reasons", [])[:6]:
                 print(f"      {reason}")
 
     if long_term:
-        print(f"\n{'━' * 50} 长线价值布局 {'━' * 50}")
+        print(f"\n{'━' * 50} 长线布局 (持有{LONG_HOLD_MONTHS_MIN}-{LONG_HOLD_MONTHS_MAX}月) {'━' * 30}")
         for i, s in enumerate(long_term, 1):
+            buy_n = s.get("long_buy_count", 0)
+            buy_ok = "✅" if s.get("long_buy_ok") else "❌"
             print(f"\n  #{i}  {s['ticker']:<6} {s.get('name','')[:12]:<12}  总分:{s.get('score',0):>5}  "
-                  f"护城河:{s.get('moat_score',0)}/10  技术:{s.get('tech_score',0):.1f}  [{s['trade_type']}]")
-            for reason in s.get("reasons", [])[:3]:
+                  f"护城河:{s.get('moat_score',0)}/10  技术:{s.get('tech_score',0):.1f}  买信号:{buy_n}/{LONG_BUY_MIN_SIGNALS}{buy_ok}")
+            for reason in s.get("reasons", [])[:6]:
                 print(f"      {reason}")
 
     print(f"\n{'━' * 50} 综合排名 TOP {TOP_N} {'━' * 50}")
@@ -2003,13 +2401,14 @@ def _print_plain(top_stocks, short_term, long_term, market_state):
         chg = fmt_pct(s.get('change_pct')) if s.get('change_pct') else 'N/A'
         print(f"  #{i}  {s['ticker']:<6} {name:<15}  总分:{s.get('score',0):>5}  "
               f"护城河:{s.get('moat_score',0)}/10  技术:{s.get('tech_score',0):.1f}  "
-              f"价格:{s.get('price','N/A'):>9}  涨跌:{chg:>8}  [{s.get('trade_type','观望')}]")
+              f"价格:{s.get('price','N/A'):>9}  涨跌:{chg:>8}  [{s.get('trade_type','观望')}] 持有:{s.get('hold_period','N/A')}")
         print(f"{'─' * 95}")
         for reason in s.get("reasons", []):
             print(f"    {reason}")
     print(f"\n{'═' * 100}")
     print("  ⚠️  数据仅供参考，不构成投资建议。")
-    print("  💡 短线: 设置严格止损, 量价背离即出; 长线: 分批建仓, 跌破MA60减仓")
+    print(f"  💡 短线: 买入≥{SHORT_BUY_MIN_SIGNALS}条信号, 持有{SHORT_HOLD_DAYS_MIN}-{SHORT_HOLD_DAYS_MAX}天, 止盈+{SHORT_SELL_TP_ATR_MULT}ATR/止损-{SHORT_SELL_SL_ATR_MULT}ATR")
+    print(f"  💡 长线: 买入≥{LONG_BUY_MIN_SIGNALS}条信号, 持有{LONG_HOLD_MONTHS_MIN}-{LONG_HOLD_MONTHS_MAX}月, 亏{LONG_SELL_HARD_SL_PCT*100:.0f}%硬止损, 赚{LONG_SELL_TP_REDUCE_PCT*100:.0f}%减仓")
     print(f"{'═' * 100}\n")
 
 
@@ -2018,7 +2417,7 @@ def _print_plain(top_stocks, short_term, long_term, market_state):
 # ═══════════════════════════════════════════════════════════════════════
 def main():
     print(f"\n{'━' * 60}")
-    print(f"  🔍 美股智能选股器 v4.0 - 长短线双轨筛选")
+    print(f"  🔍 美股智能选股器 v5.0 - 长短线双轨 + 量化买卖信号")
     print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'━' * 60}")
 
