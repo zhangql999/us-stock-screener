@@ -71,6 +71,206 @@ TECH_RSI_OVERBOUGHT = 75
 SHORT_VOL_RATIO_MIN = 1.5         # 短线要求量比 > 1.5
 SHORT_BREAKOUT_PCT = 0.02         # 突破前高2%算有效突破
 
+# ─── 公司信息库 (中文名 | 英文全称 | 大白话简介) ──────────────────────
+# 格式: "TICKER": ("中文名", "English Full Name", "一句话说清楚干啥的")
+COMPANY_INFO = {
+    # ── 科技巨头 ──
+    "AAPL":  ("苹果", "Apple Inc.", "卖iPhone、Mac电脑、iPad的，全球最赚钱的消费电子公司"),
+    "MSFT":  ("微软", "Microsoft Corporation", "做Windows系统、Office办公软件、Azure云计算的"),
+    "NVDA":  ("英伟达", "NVIDIA Corporation", "做显卡和AI芯片的，AI浪潮最大赢家"),
+    "GOOGL": ("谷歌", "Alphabet Inc.", "做搜索引擎、YouTube、安卓系统、云计算的"),
+    "GOOG":  ("谷歌", "Alphabet Inc.", "做搜索引擎、YouTube、安卓系统、云计算的"),
+    "META":  ("Meta", "Meta Platforms Inc.", "Facebook/Instagram母公司，社交媒体+VR/AR"),
+    "AMZN":  ("亚马逊", "Amazon.com Inc.", "全球最大电商+云计算(AWS)，啥都卖"),
+    "TSLA":  ("特斯拉", "Tesla Inc.", "造电动车的，也搞自动驾驶和储能"),
+
+    # ── 半导体/芯片 ──
+    "AMD":   ("超微半导体", "Advanced Micro Devices Inc.", "做CPU和GPU芯片的，英伟达和英特尔的竞争对手"),
+    "INTC":  ("英特尔", "Intel Corporation", "做电脑CPU芯片的老牌半导体公司"),
+    "AVGO":  ("博通", "Broadcom Inc.", "做网络芯片和基础设施软件的半导体巨头"),
+    "MU":    ("美光", "Micron Technology Inc.", "做内存和存储芯片(DRAM/NAND)的"),
+    "ARM":   ("ARM", "Arm Holdings plc", "设计芯片架构的，几乎所有手机芯片都用它的技术"),
+    "SMCI":  ("超微电脑", "Super Micro Computer Inc.", "做AI服务器的，给数据中心提供硬件"),
+    "QCOM":  ("高通", "Qualcomm Inc.", "做手机芯片(骁龙)和5G通信技术的"),
+    "TSM":   ("台积电", "Taiwan Semiconductor Mfg.", "全球最大芯片代工厂，帮苹果英伟达造芯片"),
+    "ASML":  ("阿斯麦", "ASML Holding N.V.", "造光刻机的，芯片制造必备设备，全球垄断"),
+    "TXN":   ("德州仪器", "Texas Instruments Inc.", "做模拟芯片和嵌入式处理器的老牌半导体"),
+    "LRCX":  ("拉姆研究", "Lam Research Corporation", "做芯片制造刻蚀设备的"),
+    "AMAT":  ("应用材料", "Applied Materials Inc.", "做芯片制造设备的，半导体设备龙头"),
+    "KLAC":  ("科磊", "KLA Corporation", "做芯片检测和量测设备的"),
+    "MRVL":  ("迈威尔", "Marvell Technology Inc.", "做数据中心和5G网络芯片的"),
+    "ON":    ("安森美", "ON Semiconductor Corporation", "做汽车和工业用芯片的"),
+    "ADI":   ("亚德诺", "Analog Devices Inc.", "做模拟和混合信号芯片的"),
+
+    # ── 软件/云计算 ──
+    "CRM":   ("Salesforce", "Salesforce Inc.", "做企业客户管理(CRM)云软件的，SaaS龙头"),
+    "ORCL":  ("甲骨文", "Oracle Corporation", "做企业数据库和云计算的"),
+    "ADBE":  ("Adobe", "Adobe Inc.", "做Photoshop、PDF、视频剪辑等创意软件的"),
+    "NOW":   ("ServiceNow", "ServiceNow Inc.", "做企业IT服务管理云平台的"),
+    "SNOW":  ("Snowflake", "Snowflake Inc.", "做云端数据仓库的，帮企业分析大数据"),
+    "DDOG":  ("Datadog", "Datadog Inc.", "做云监控和数据分析的，帮程序员盯系统"),
+    "PLTR":  ("帕兰提尔", "Palantir Technologies Inc.", "做大数据分析的，主要服务政府和军方"),
+    "SHOP":  ("Shopify", "Shopify Inc.", "帮商家开网店的电商SaaS平台"),
+    "WDAY":  ("Workday", "Workday Inc.", "做企业人力资源和财务管理云软件的"),
+    "ZS":    ("Zscaler", "Zscaler Inc.", "做云端网络安全的，零信任架构"),
+    "MDB":   ("MongoDB", "MongoDB Inc.", "做NoSQL数据库的，开发者很爱用"),
+
+    # ── 网络安全 ──
+    "PANW":  ("Palo Alto Networks", "Palo Alto Networks Inc.", "做网络安全的，防火墙和云安全龙头"),
+    "CRWD":  ("CrowdStrike", "CrowdStrike Holdings Inc.", "做终端安全和云安全的，防黑客入侵"),
+    "NET":   ("Cloudflare", "Cloudflare Inc.", "做网站加速(CDN)和网络安全的"),
+    "FTNT":  ("飞塔", "Fortinet Inc.", "做网络安全防火墙的"),
+    "S":     ("SentinelOne", "SentinelOne Inc.", "做AI驱动的终端安全防护的"),
+
+    # ── 流媒体/娱乐 ──
+    "NFLX":  ("奈飞", "Netflix Inc.", "全球最大流媒体平台，拍剧拍电影的"),
+    "DIS":   ("迪士尼", "The Walt Disney Company", "做电影、主题乐园、Disney+流媒体的"),
+    "SPOT":  ("Spotify", "Spotify Technology S.A.", "全球最大音乐流媒体平台"),
+    "ROKU":  ("Roku", "Roku Inc.", "做智能电视系统和流媒体平台的"),
+
+    # ── 电商/互联网 ──
+    "BABA":  ("阿里巴巴", "Alibaba Group Holding Ltd.", "中国最大电商，淘宝天猫的母公司"),
+    "JD":    ("京东", "JD.com Inc.", "中国第二大电商，自营物流，卖正品"),
+    "PDD":   ("拼多多", "PDD Holdings Inc.", "拼多多+Temu母公司，低价电商"),
+    "MELI":  ("MercadoLibre", "MercadoLibre Inc.", "拉美最大电商和支付平台，拉美版淘宝"),
+    "SE":    ("Sea Limited", "Sea Limited", "东南亚互联网巨头，做游戏(Garena)、电商(Shopee)"),
+    "GRAB":  ("Grab", "Grab Holdings Ltd.", "东南亚打车和外卖平台，东南亚版滴滴"),
+    "EBAY":  ("eBay", "eBay Inc.", "老牌在线拍卖和电商平台"),
+
+    # ── 金融科技 ──
+    "COIN":  ("Coinbase", "Coinbase Global Inc.", "美国最大加密货币交易所"),
+    "SOFI":  ("SoFi", "SoFi Technologies Inc.", "互联网银行，做贷款、投资、银行服务"),
+    "SQ":    ("Block", "Block Inc.", "做移动支付(Cash App)和商户收款的，原名Square"),
+    "PYPL":  ("PayPal", "PayPal Holdings Inc.", "在线支付平台，跨境电商付款常用"),
+    "NU":    ("Nu Holdings", "Nu Holdings Ltd.", "拉美最大数字银行，巴西最火的互联网银行"),
+    "AFRM":  ("Affirm", "Affirm Holdings Inc.", "做先买后付(BNPL)分期付款的"),
+    "HOOD":  ("Robinhood", "Robinhood Markets Inc.", "零佣金炒股App，年轻人爱用"),
+
+    # ── 出行/物流 ──
+    "UBER":  ("优步", "Uber Technologies Inc.", "全球最大打车和外卖平台"),
+    "LYFT":  ("Lyft", "Lyft Inc.", "美国第二大打车平台"),
+    "DASH":  ("DoorDash", "DoorDash Inc.", "美国最大外卖配送平台"),
+
+    # ── 加密货币挖矿 ──
+    "MARA":  ("Marathon Digital", "Marathon Digital Holdings Inc.", "北美最大比特币矿企之一"),
+    "RIOT":  ("Riot Platforms", "Riot Platforms Inc.", "挖比特币的，北美大矿场"),
+    "MSTR":  ("MicroStrategy", "MicroStrategy Inc.", "大量囤比特币的软件公司，币圈风向标"),
+    "CLSK":  ("CleanSpark", "CleanSpark Inc.", "挖比特币的，主打清洁能源挖矿"),
+
+    # ── 电动车/新能源 ──
+    "NIO":   ("蔚来", "NIO Inc.", "中国造高端电动车的，有换电服务"),
+    "XPEV":  ("小鹏", "XPeng Inc.", "中国造智能电动车的，主打自动驾驶"),
+    "LI":    ("理想", "Li Auto Inc.", "中国造增程式电动SUV的，家庭用车"),
+    "RIVN":  ("Rivian", "Rivian Automotive Inc.", "美国造电动皮卡和SUV的"),
+    "LCID":  ("Lucid", "Lucid Group Inc.", "美国造豪华电动轿车的"),
+    "ENPH":  ("Enphase", "Enphase Energy Inc.", "做家用太阳能微型逆变器的"),
+    "FSLR":  ("First Solar", "First Solar Inc.", "做太阳能电池板的"),
+
+    # ── 传统金融 ──
+    "JPM":   ("摩根大通", "JPMorgan Chase & Co.", "美国最大银行，投行+零售银行都做"),
+    "V":     ("Visa", "Visa Inc.", "全球最大信用卡支付网络，刷卡就有它"),
+    "MA":    ("万事达", "Mastercard Inc.", "全球第二大信用卡支付网络"),
+    "GS":    ("高盛", "The Goldman Sachs Group Inc.", "华尔街顶级投行"),
+    "MS":    ("摩根士丹利", "Morgan Stanley", "华尔街大投行，财富管理也很强"),
+    "BAC":   ("美国银行", "Bank of America Corporation", "美国第二大银行"),
+    "WFC":   ("富国银行", "Wells Fargo & Company", "美国大型零售银行"),
+    "C":     ("花旗", "Citigroup Inc.", "全球性大银行"),
+    "BRK.B": ("伯克希尔", "Berkshire Hathaway Inc.", "巴菲特的公司，投资控股集团"),
+    "AXP":   ("美国运通", "American Express Company", "高端信用卡和支付公司"),
+    "SCHW":  ("嘉信理财", "Charles Schwab Corporation", "美国最大在线券商之一"),
+
+    # ── 医疗/制药 ──
+    "UNH":   ("联合健康", "UnitedHealth Group Inc.", "美国最大医疗保险公司"),
+    "LLY":   ("礼来", "Eli Lilly and Company", "做减肥药和糖尿病药的制药巨头"),
+    "JNJ":   ("强生", "Johnson & Johnson", "做药品和医疗器械的老牌医药公司"),
+    "ABBV":  ("艾伯维", "AbbVie Inc.", "做免疫和肿瘤药的制药公司"),
+    "TMO":   ("赛默飞", "Thermo Fisher Scientific Inc.", "做实验室仪器和生命科学设备的"),
+    "PFE":   ("辉瑞", "Pfizer Inc.", "大型制药公司，新冠疫苗让它火了一把"),
+    "MRK":   ("默克", "Merck & Co. Inc.", "做肿瘤免疫药K药的制药巨头"),
+    "BMY":   ("百时美施贵宝", "Bristol-Myers Squibb Company", "做肿瘤和心血管药的"),
+    "AMGN":  ("安进", "Amgen Inc.", "做生物制药的，减肥药也在研发"),
+    "GILD":  ("吉利德", "Gilead Sciences Inc.", "做抗病毒药的，丙肝和HIV药物很出名"),
+    "ISRG":  ("直觉外科", "Intuitive Surgical Inc.", "做达芬奇手术机器人的"),
+    "MRNA":  ("Moderna", "Moderna Inc.", "做mRNA疫苗和药物的生物科技公司"),
+    "REGN":  ("再生元", "Regeneron Pharmaceuticals Inc.", "做生物制药的，眼科和免疫药强"),
+
+    # ── 消费品/零售 ──
+    "WMT":   ("沃尔玛", "Walmart Inc.", "全球最大零售超市连锁，啥都卖还便宜"),
+    "COST":  ("好市多", "Costco Wholesale Corporation", "会员制仓储超市，美国版山姆店"),
+    "HD":    ("家得宝", "The Home Depot Inc.", "美国最大家装建材零售商"),
+    "PG":    ("宝洁", "The Procter & Gamble Company", "做日用品的，飘柔海飞丝汰渍都是它的"),
+    "KO":    ("可口可乐", "The Coca-Cola Company", "卖可乐和各种饮料的，巴菲特最爱"),
+    "PEP":   ("百事", "PepsiCo Inc.", "卖百事可乐和乐事薯片的"),
+    "MCD":   ("麦当劳", "McDonald's Corporation", "全球最大快餐连锁，金拱门"),
+    "SBUX":  ("星巴克", "Starbucks Corporation", "全球最大咖啡连锁店"),
+    "NKE":   ("耐克", "NIKE Inc.", "全球最大运动品牌"),
+    "LOW":   ("劳氏", "Lowe's Companies Inc.", "美国第二大家装零售商"),
+    "TGT":   ("塔吉特", "Target Corporation", "美国大型连锁百货超市"),
+    "LULU":  ("露露柠檬", "Lululemon Athletica Inc.", "做高端瑜伽裤和运动服的"),
+
+    # ── 能源 ──
+    "XOM":   ("埃克森美孚", "Exxon Mobil Corporation", "全球最大石油公司之一"),
+    "CVX":   ("雪佛龙", "Chevron Corporation", "大型石油天然气公司"),
+    "COP":   ("康菲", "ConocoPhillips", "美国大型独立石油开采公司"),
+    "SLB":   ("斯伦贝谢", "SLB (Schlumberger)", "全球最大油田服务公司"),
+    "OXY":   ("西方石油", "Occidental Petroleum Corporation", "石油开采公司，巴菲特重仓"),
+
+    # ── 工业/航空航天 ──
+    "BA":    ("波音", "The Boeing Company", "造飞机的，全球两大飞机制造商之一"),
+    "CAT":   ("卡特彼勒", "Caterpillar Inc.", "造挖掘机和工程机械的全球龙头"),
+    "DE":    ("迪尔", "Deere & Company", "造农业机械(拖拉机)的"),
+    "GE":    ("通用电气", "GE Aerospace", "做航空发动机的，老牌工业巨头"),
+    "HON":   ("霍尼韦尔", "Honeywell International Inc.", "做航空、自动化、特种材料的工业集团"),
+    "RTX":   ("雷神", "RTX Corporation", "做军工武器和航空零部件的"),
+    "LMT":   ("洛克希德马丁", "Lockheed Martin Corporation", "美国最大军工企业，造F-35战斗机"),
+    "NOC":   ("诺斯罗普格鲁曼", "Northrop Grumman Corporation", "做军工和国防系统的"),
+    "UPS":   ("联合包裹", "United Parcel Service Inc.", "全球最大快递物流公司之一"),
+    "FDX":   ("联邦快递", "FedEx Corporation", "全球快递物流巨头"),
+
+    # ── 通信/电信 ──
+    "T":     ("AT&T", "AT&T Inc.", "美国大型电信运营商"),
+    "VZ":    ("威瑞森", "Verizon Communications Inc.", "美国最大电信运营商之一"),
+    "TMUS":  ("T-Mobile", "T-Mobile US Inc.", "美国第三大电信运营商，网速快"),
+
+    # ── 其他 ──
+    "BX":    ("黑石", "Blackstone Inc.", "全球最大另类资产管理公司，搞私募和房地产"),
+    "BLK":   ("贝莱德", "BlackRock Inc.", "全球最大资产管理公司，管十万亿美元"),
+    "ABNB":  ("爱彼迎", "Airbnb Inc.", "全球最大民宿短租平台"),
+    "ZM":    ("Zoom", "Zoom Video Communications Inc.", "做视频会议的，疫情时火爆全球"),
+    "SNAP":  ("Snapchat", "Snap Inc.", "做阅后即焚社交App的"),
+    "PINS":  ("Pinterest", "Pinterest Inc.", "图片社交和灵感发现平台"),
+    "RBLX":  ("Roblox", "Roblox Corporation", "做元宇宙游戏平台的，小孩子很爱玩"),
+    "U":     ("Unity", "Unity Technologies Inc.", "做游戏引擎的，很多手游都用它开发"),
+    "TTD":   ("Trade Desk", "The Trade Desk Inc.", "做程序化广告投放平台的"),
+    "BILL":  ("Bill.com", "BILL Holdings Inc.", "帮中小企业自动化付账单的"),
+    "TEAM":  ("Atlassian", "Atlassian Corporation", "做Jira和Confluence等团队协作工具的"),
+    "VEEV":  ("Veeva", "Veeva Systems Inc.", "做医药行业云软件的"),
+    "HUBS":  ("HubSpot", "HubSpot Inc.", "做营销和销售自动化软件的"),
+    "OKTA":  ("Okta", "Okta Inc.", "做身份认证和访问管理的"),
+    "TWLO":  ("Twilio", "Twilio Inc.", "做云通信API的，帮App发短信打电话"),
+    "PATH":  ("UiPath", "UiPath Inc.", "做机器人流程自动化(RPA)的"),
+    "MNDY":  ("Monday.com", "Monday.com Ltd.", "做团队项目管理协作工具的"),
+    "AI":    ("C3.ai", "C3.ai Inc.", "做企业AI软件平台的"),
+    "IONQ":  ("IonQ", "IonQ Inc.", "做量子计算机的"),
+    "RGTI":  ("Rigetti", "Rigetti Computing Inc.", "做量子计算芯片和云平台的"),
+}
+
+
+def get_company_desc(ticker):
+    """获取公司简介: 返回 '中文名 (英文全称) - 简介' 或 None"""
+    info = COMPANY_INFO.get(ticker)
+    if info:
+        cn, en, desc = info
+        return f"{cn} ({en}) - {desc}"
+    return None
+
+
+def get_company_short(ticker):
+    """获取公司中文名, 没有则返回 None"""
+    info = COMPANY_INFO.get(ticker)
+    return info[0] if info else None
+
+
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 
@@ -1217,6 +1417,11 @@ def score_and_rank(premarket, earnings, analyst, options, fundamentals, technica
         dimensions = 0
         detail = {}
 
+        # ── 公司简介 ──
+        company_desc = get_company_desc(ticker)
+        if company_desc:
+            reasons.append(f"🏢 {company_desc}")
+
         # ── 盘前异动 ──
         if ticker in premarket:
             dimensions += 1
@@ -1231,7 +1436,8 @@ def score_and_rank(premarket, earnings, analyst, options, fundamentals, technica
             score += s
             reasons.append(f"📈 {info['signal']}")
             detail.update({"price": info.get("price"), "change_pct": change,
-                           "name": info.get("name", ""), "market_cap": info.get("market_cap", 0)})
+                           "name": get_company_short(ticker) or info.get("name", ""),
+                           "market_cap": info.get("market_cap", 0)})
 
         # ── 财报 ──
         if ticker in earnings:
@@ -1321,12 +1527,16 @@ def score_and_rank(premarket, earnings, analyst, options, fundamentals, technica
             reasons.append(f"✦ {dimensions}维信号共振")
 
         # ── 补充 detail ──
+        cn_name = get_company_short(ticker)
         if ticker in all_quotes and "name" not in detail:
             q = all_quotes[ticker]
-            detail["name"] = q.get("displayName") or q.get("shortName", "")
+            yahoo_name = q.get("displayName") or q.get("shortName", "")
+            detail["name"] = cn_name or yahoo_name
             detail["price"] = f'{q.get("regularMarketPrice", 0):.2f}'
             detail["market_cap"] = q.get("marketCap", 0)
             detail["change_pct"] = q.get("preMarketChangePercent") or q.get("regularMarketChangePercent", 0)
+        elif cn_name and "name" in detail:
+            detail["name"] = cn_name
 
         # 交易类型
         trade_type = technicals.get(ticker, {}).get("trade_type", "观望")
