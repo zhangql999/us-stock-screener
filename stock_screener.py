@@ -259,31 +259,71 @@ COMPANY_INFO = {
 # 动态从网络获取的公司信息缓存 (运行期间持续积累)
 _COMPANY_INFO_DYNAMIC = {}
 
+# Finviz 行业英文→中文翻译
+SECTOR_CN = {
+    "Technology": "科技", "Healthcare": "医疗健康", "Financial": "金融",
+    "Consumer Cyclical": "可选消费", "Consumer Defensive": "必需消费",
+    "Communication Services": "通信服务", "Energy": "能源",
+    "Industrials": "工业", "Basic Materials": "基础材料",
+    "Real Estate": "房地产", "Utilities": "公用事业",
+}
 
-def _summarize_business(long_summary, industry="", sector=""):
-    """将 Yahoo 的英文长描述精简为一句大白话中文简介"""
-    if not long_summary:
-        parts = []
-        if sector:
-            parts.append(sector)
-        if industry:
-            parts.append(industry)
-        return "|".join(parts) if parts else ""
-
-    # 取第一句话 (通常最概括)
-    first_sentence = long_summary.split(".")[0].strip()
-    if len(first_sentence) > 120:
-        first_sentence = first_sentence[:120] + "..."
-
-    # 拼上行业信息
-    tags = []
-    if sector:
-        tags.append(sector)
-    if industry:
-        tags.append(industry)
-    tag_str = f" [{'/'.join(tags)}]" if tags else ""
-
-    return f"{first_sentence}{tag_str}"
+INDUSTRY_CN = {
+    # 科技
+    "Software - Application": "应用软件", "Software - Infrastructure": "基础软件",
+    "Semiconductors": "半导体芯片", "Semiconductor Equipment & Materials": "半导体设备",
+    "Information Technology Services": "IT服务", "Electronic Components": "电子元件",
+    "Computer Hardware": "电脑硬件", "Consumer Electronics": "消费电子",
+    "Scientific & Technical Instruments": "科学仪器",
+    "Solar": "太阳能", "Communication Equipment": "通信设备",
+    "Electronic Gaming & Multimedia": "电子游戏与多媒体",
+    # 金融
+    "Banks - Diversified": "综合银行", "Banks - Regional": "区域银行",
+    "Capital Markets": "资本市场", "Insurance - Diversified": "综合保险",
+    "Credit Services": "信用服务", "Financial Data & Stock Exchanges": "金融数据",
+    "Asset Management": "资产管理", "Insurance Brokers": "保险经纪",
+    # 医疗
+    "Drug Manufacturers - General": "制药巨头", "Drug Manufacturers - Specialty & Generic": "专科/仿制药",
+    "Biotechnology": "生物科技", "Medical Devices": "医疗器械",
+    "Health Information Services": "健康信息服务",
+    "Medical Instruments & Supplies": "医疗器械耗材",
+    "Diagnostics & Research": "诊断与研究",
+    "Healthcare Plans": "医疗保险", "Pharmaceutical Retailers": "药房零售",
+    # 消费
+    "Internet Retail": "电商零售", "Discount Stores": "折扣商店",
+    "Restaurants": "餐饮", "Beverages - Non-Alcoholic": "无酒精饮料",
+    "Household & Personal Products": "日用品", "Footwear & Accessories": "鞋服配饰",
+    "Home Improvement Retail": "家装零售", "Apparel Retail": "服装零售",
+    "Specialty Retail": "专业零售", "Grocery Stores": "超市",
+    "Auto Manufacturers": "汽车制造", "Leisure": "休闲娱乐",
+    "Gambling": "博彩", "Resorts & Casinos": "度假与赌场",
+    "Packaged Foods": "包装食品", "Tobacco": "烟草",
+    "Beverages - Brewers": "啤酒", "Beverages - Wineries & Distilleries": "葡萄酒/烈酒",
+    # 工业
+    "Aerospace & Defense": "航空航天与国防", "Industrial Distribution": "工业分销",
+    "Farm & Heavy Construction Machinery": "工程机械", "Railroads": "铁路",
+    "Airlines": "航空", "Trucking": "卡车运输",
+    "Integrated Freight & Logistics": "综合物流",
+    "Specialty Industrial Machinery": "专业工业机械",
+    "Rental & Leasing Services": "租赁服务",
+    "Waste Management": "废物管理", "Conglomerates": "多元集团",
+    "Engineering & Construction": "工程建设",
+    # 能源
+    "Oil & Gas Integrated": "综合石油", "Oil & Gas E&P": "石油勘探开发",
+    "Oil & Gas Equipment & Services": "油田服务",
+    "Uranium": "铀矿", "Coal": "煤炭",
+    # 通信
+    "Internet Content & Information": "互联网内容", "Telecom Services": "电信服务",
+    "Entertainment": "娱乐", "Advertising Agencies": "广告",
+    "Broadcasting": "广播电视", "Publishing": "出版",
+    # 其他
+    "REIT - Diversified": "REITs房托", "REIT - Industrial": "工业REITs",
+    "Utilities - Regulated Electric": "电力公司",
+    "Utilities - Renewable": "可再生能源",
+    "Gold": "黄金", "Steel": "钢铁", "Copper": "铜",
+    "Chemicals": "化工", "Specialty Chemicals": "特种化工",
+    "Building Materials": "建筑材料",
+}
 
 
 def cache_company_from_yahoo(ticker, profile_data, short_name=""):
@@ -294,31 +334,130 @@ def cache_company_from_yahoo(ticker, profile_data, short_name=""):
         return
 
     company_name = ""
-    summary = ""
-    industry = ""
-    sector = ""
+    desc = ""
 
     if profile_data:
         company_name = profile_data.get("name", "") or short_name
         industry = profile_data.get("industry", "")
         sector = profile_data.get("sector", "")
         long_desc = profile_data.get("longBusinessSummary", "")
-        summary = _summarize_business(long_desc, industry, sector)
+
+        # 行业中文翻译
+        sector_cn = SECTOR_CN.get(sector, sector)
+        industry_cn = INDUSTRY_CN.get(industry, industry)
+
+        if long_desc:
+            first_sentence = long_desc.split(".")[0].strip()
+            if len(first_sentence) > 120:
+                first_sentence = first_sentence[:120] + "..."
+            desc = f"{first_sentence} [{sector_cn}/{industry_cn}]"
+        elif industry:
+            desc = f"{sector_cn} | {industry_cn}"
+        elif sector:
+            desc = sector_cn
     else:
         company_name = short_name
 
     if company_name:
-        _COMPANY_INFO_DYNAMIC[ticker] = (company_name, company_name, summary)
+        # 只在没有现有描述时才写入，或新描述更详细时覆盖
+        existing = _COMPANY_INFO_DYNAMIC.get(ticker)
+        if not existing or (desc and not existing[2]):
+            _COMPANY_INFO_DYNAMIC[ticker] = (company_name, company_name, desc)
+
+
+def fetch_company_profiles(tickers):
+    """从 Finviz 批量获取公司行业简介 + 个股页获取业务描述"""
+    need = [t for t in tickers
+            if t not in COMPANY_INFO
+            and (t not in _COMPANY_INFO_DYNAMIC or not _COMPANY_INFO_DYNAMIC[t][2])]
+    if not need:
+        return
+
+    print(f"\n[补充] 从 Finviz 获取 {len(need)} 只候选的公司简介 ...")
+    filled = 0
+
+    # ── 第一步: Finviz screener 批量获取 sector/industry ──
+    batch_size = 20
+    for i in range(0, len(need), batch_size):
+        batch = need[i:i + batch_size]
+        r = fetch("https://finviz.com/screener.ashx",
+                  params={"v": "111", "t": ",".join(batch), "ft": "4"})
+        if not r:
+            continue
+        soup = BeautifulSoup(r.text, "lxml")
+        for row in soup.select("tr[valign='top']"):
+            cols = row.find_all("td")
+            if len(cols) < 6:
+                continue
+            ticker = cols[1].get_text(strip=True)
+            company = cols[2].get_text(strip=True)
+            sector = cols[3].get_text(strip=True)
+            industry = cols[4].get_text(strip=True)
+            if ticker and company and (sector or industry):
+                sector_cn = SECTOR_CN.get(sector, sector)
+                industry_cn = INDUSTRY_CN.get(industry, industry)
+                desc = f"{sector_cn} | {industry_cn}" if industry else sector_cn
+                _COMPANY_INFO_DYNAMIC[ticker] = (company, company, desc)
+                filled += 1
+        if i + batch_size < len(need):
+            time.sleep(0.3)
+
+    # ── 第二步: 对仍缺描述的, 从 Finviz 个股页获取详细业务描述 ──
+    still_missing = [t for t in need
+                     if t not in _COMPANY_INFO_DYNAMIC or not _COMPANY_INFO_DYNAMIC[t][2]]
+    if still_missing:
+        def _fetch_one(ticker):
+            r = fetch(f"https://finviz.com/quote.ashx", params={"t": ticker}, timeout=10)
+            if not r:
+                return None
+            soup = BeautifulSoup(r.text, "lxml")
+            desc_td = soup.select_one("td.fullview-profile")
+            desc = ""
+            if desc_td:
+                desc = desc_td.get_text(strip=True)[:150]
+            company = ""
+            links = soup.select("table.fullview-title a.tab-link")
+            if links:
+                company = links[0].get_text(strip=True)
+            sector_links = soup.select("a.fullview-links-col")
+            sector, industry = "", ""
+            for sl in sector_links:
+                href = sl.get("href", "")
+                txt = sl.get_text(strip=True)
+                if "sector" in href.lower():
+                    sector = txt
+                elif "industry" in href.lower():
+                    industry = txt
+            if not company:
+                return None
+            sector_cn = SECTOR_CN.get(sector, sector)
+            industry_cn = INDUSTRY_CN.get(industry, industry)
+            if desc:
+                full_desc = f"{desc} [{sector_cn}/{industry_cn}]" if industry else desc
+            else:
+                full_desc = f"{sector_cn} | {industry_cn}" if industry else sector_cn
+            return (ticker, company, full_desc)
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            futures = {pool.submit(_fetch_one, t): t for t in still_missing[:30]}
+            for f in as_completed(futures):
+                res = f.result()
+                if res:
+                    t, company, desc = res
+                    _COMPANY_INFO_DYNAMIC[t] = (company, company, desc)
+                    filled += 1
+
+    print(f"  获取到 {filled}/{len(need)} 只公司简介")
 
 
 def get_company_desc(ticker):
     """获取公司简介: 返回 '中文名 (英文全称) - 简介' 或 fallback"""
-    # 1. 优先用本地词典 (中文)
+    # 1. 优先用本地词典 (中文大白话简介)
     info = COMPANY_INFO.get(ticker)
     if info:
         cn, en, desc = info
         return f"{cn} ({en}) - {desc}"
-    # 2. 用动态缓存 (从Yahoo拉取的)
+    # 2. 用动态缓存 (Finviz/Yahoo拉取的行业信息)
     info = _COMPANY_INFO_DYNAMIC.get(ticker)
     if info:
         name, full_name, desc = info
@@ -1905,6 +2044,10 @@ def main():
     print(f"{'━' * 60}")
 
     ticker_list = list(all_tickers)
+
+    # ── 补充: 从 Finviz 获取公司简介 (行业/业务) ──
+    fetch_company_profiles(ticker_list)
+
     with ThreadPoolExecutor(max_workers=2) as pool:
         f_fund = pool.submit(fetch_fundamentals, ticker_list)
         f_tech = pool.submit(fetch_technicals, ticker_list)
