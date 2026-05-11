@@ -256,19 +256,87 @@ COMPANY_INFO = {
 }
 
 
+# 动态从网络获取的公司信息缓存 (运行期间持续积累)
+_COMPANY_INFO_DYNAMIC = {}
+
+
+def _summarize_business(long_summary, industry="", sector=""):
+    """将 Yahoo 的英文长描述精简为一句大白话中文简介"""
+    if not long_summary:
+        parts = []
+        if sector:
+            parts.append(sector)
+        if industry:
+            parts.append(industry)
+        return "|".join(parts) if parts else ""
+
+    # 取第一句话 (通常最概括)
+    first_sentence = long_summary.split(".")[0].strip()
+    if len(first_sentence) > 120:
+        first_sentence = first_sentence[:120] + "..."
+
+    # 拼上行业信息
+    tags = []
+    if sector:
+        tags.append(sector)
+    if industry:
+        tags.append(industry)
+    tag_str = f" [{'/'.join(tags)}]" if tags else ""
+
+    return f"{first_sentence}{tag_str}"
+
+
+def cache_company_from_yahoo(ticker, profile_data, short_name=""):
+    """从 Yahoo assetProfile 数据缓存公司信息"""
+    if ticker in COMPANY_INFO:
+        return  # 本地已有，不覆盖
+    if not profile_data and not short_name:
+        return
+
+    company_name = ""
+    summary = ""
+    industry = ""
+    sector = ""
+
+    if profile_data:
+        company_name = profile_data.get("name", "") or short_name
+        industry = profile_data.get("industry", "")
+        sector = profile_data.get("sector", "")
+        long_desc = profile_data.get("longBusinessSummary", "")
+        summary = _summarize_business(long_desc, industry, sector)
+    else:
+        company_name = short_name
+
+    if company_name:
+        _COMPANY_INFO_DYNAMIC[ticker] = (company_name, company_name, summary)
+
+
 def get_company_desc(ticker):
-    """获取公司简介: 返回 '中文名 (英文全称) - 简介' 或 None"""
+    """获取公司简介: 返回 '中文名 (英文全称) - 简介' 或 fallback"""
+    # 1. 优先用本地词典 (中文)
     info = COMPANY_INFO.get(ticker)
     if info:
         cn, en, desc = info
         return f"{cn} ({en}) - {desc}"
+    # 2. 用动态缓存 (从Yahoo拉取的)
+    info = _COMPANY_INFO_DYNAMIC.get(ticker)
+    if info:
+        name, full_name, desc = info
+        if desc:
+            return f"{name} - {desc}"
+        return name
     return None
 
 
 def get_company_short(ticker):
-    """获取公司中文名, 没有则返回 None"""
+    """获取公司中文名/简称, 没有则返回 None"""
     info = COMPANY_INFO.get(ticker)
-    return info[0] if info else None
+    if info:
+        return info[0]
+    info = _COMPANY_INFO_DYNAMIC.get(ticker)
+    if info:
+        return info[0]
+    return None
 
 
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -607,6 +675,13 @@ def fetch_premarket_movers():
 
     print(f"  获取到 {len(all_quotes)} 只报价")
 
+    # 将 Yahoo 报价中的公司名缓存起来 (作为兜底)
+    for sym, q in all_quotes.items():
+        if sym not in COMPANY_INFO and sym not in _COMPANY_INFO_DYNAMIC:
+            sn = q.get("displayName") or q.get("shortName", "")
+            if sn:
+                _COMPANY_INFO_DYNAMIC[sym] = (sn, sn, "")
+
     results = {}
     market_state = None
 
@@ -889,12 +964,17 @@ def fetch_fundamentals(tickers):
     print("\n[5/7] 基本面质量评估 (核心资产筛选) ...")
     results = {}
 
-    modules = "financialData,defaultKeyStatistics,summaryDetail,earningsTrend"
+    modules = "financialData,defaultKeyStatistics,summaryDetail,earningsTrend,assetProfile"
 
     def evaluate(ticker):
         data = yahoo.summary(ticker, modules)
         if not data:
             return None
+
+        # 提取公司简介并缓存
+        profile = data.get("assetProfile", {})
+        if profile:
+            cache_company_from_yahoo(ticker, profile)
 
         fd = data.get("financialData", {})
         ks = data.get("defaultKeyStatistics", {})
