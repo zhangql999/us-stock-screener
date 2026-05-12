@@ -10,7 +10,12 @@ from bs4 import BeautifulSoup
 
 RECEIVE_ID  = "ou_d364ab80c415a76fc4de9a1667cd20d2"
 SCREENER    = "/home/ht/US_stock/stock_screener.py"
-GEMINI_KEY  = open("/home/ht/.sisyphus/gemini_key").read().strip()
+
+# GitHub Models API (Copilot Pro 付费会员)
+GITHUB_TOKEN = subprocess.check_output(["gh", "auth", "token"]).decode().strip()
+GITHUB_MODELS_URL = "https://models.inference.ai.azure.com/chat/completions"
+# 模型降级链: GPT-4o → GPT-4o-mini
+GITHUB_MODELS = ["gpt-4o", "gpt-4o-mini"]
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -420,43 +425,48 @@ def _batch_verify_price(tickers):
     return results
 
 
-# Gemini 备用模型列表 (按优先级)
-GEMINI_MODELS = [
-    "gemini-2.0-flash",
-    "gemini-1.5-flash",
-    "gemini-1.5-flash-8b",
-]
-
-def call_gemini(prompt: str) -> str:
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.3, "maxOutputTokens": 1200}
-    }
-    for model in GEMINI_MODELS:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_KEY}"
+def call_llm(prompt: str) -> str:
+    """调用 GitHub Models API (OpenAI兼容格式), 支持降级重试"""
+    for model in GITHUB_MODELS:
         for attempt in range(3):
             try:
-                r = requests.post(url, json=payload, timeout=60)
+                r = requests.post(
+                    GITHUB_MODELS_URL,
+                    headers={
+                        "Authorization": f"Bearer {GITHUB_TOKEN}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": model,
+                        "messages": [
+                            {"role": "system", "content": "你是顶级美股宏观交易员，擅长整合全球信息做每日操盘分析。回答简洁精准。"},
+                            {"role": "user", "content": prompt},
+                        ],
+                        "temperature": 0.3,
+                        "max_tokens": 1500,
+                    },
+                    timeout=60,
+                )
                 if r.status_code == 429:
-                    wait = (attempt + 1) * 5  # 5s, 10s, 15s
-                    log(f"  Gemini {model} 限流(429), {wait}s后重试...")
+                    wait = (attempt + 1) * 5
+                    log(f"  {model} 限流(429), {wait}s后重试...")
                     time.sleep(wait)
                     continue
                 r.raise_for_status()
-                return r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+                return r.json()["choices"][0]["message"]["content"].strip()
             except requests.exceptions.HTTPError as e:
                 if r.status_code == 429:
                     wait = (attempt + 1) * 5
-                    log(f"  Gemini {model} 限流(429), {wait}s后重试...")
+                    log(f"  {model} 限流(429), {wait}s后重试...")
                     time.sleep(wait)
                     continue
-                log(f"  Gemini {model} HTTP错误: {e}")
-                break  # 非429错误, 换模型
+                log(f"  {model} HTTP错误: {e}")
+                break
             except Exception as e:
-                log(f"  Gemini {model} 异常: {e}")
+                log(f"  {model} 异常: {e}")
                 break
         log(f"  模型 {model} 失败, 尝试下一个...")
-    log("  所有Gemini模型均失败")
+    log("  所有模型均失败")
     return None
 
 def rule_based_6q(intel, top_stocks, macro, sectors):
@@ -561,11 +571,11 @@ def build_6q(intel, short_stocks, long_stocks, top_stocks, macro, sectors):
 【一句话操盘建议】
 [回答]"""
 
-    log("  调用 Gemini 2.0 Flash...")
-    answer = call_gemini(prompt)
+    log("  调用 GitHub Models (GPT-4o)...")
+    answer = call_llm(prompt)
     if answer:
         return answer
-    log("  Gemini 失败，切换规则兜底...")
+    log("  LLM 失败，切换规则兜底...")
     return rule_based_6q(intel, top_stocks, macro, sectors)
 
 def get_feishu_token():
