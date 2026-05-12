@@ -253,6 +253,174 @@ def parse_screener_full(raw):
 
     return short_stocks, long_stocks, top_stocks
 
+# ═══════════════════════════════════════════════════════════════════════
+# 验证层: 多源交叉验证选股结果
+# ═══════════════════════════════════════════════════════════════════════
+
+def verify_stocks(stocks, macro, all_news):
+    """
+    对选股器输出的每只股票做多源交叉验证:
+      1. yfinance: 量价确认 (量比>1.5? 站上MA5? 动量方向?)
+      2. BTC/VIX: 风险环境 (VIX>25? BTC暴跌>5%?)
+      3. 新闻情绪: 有无该股重大利空关键词
+    返回带验证标签的 stocks 列表
+    """
+    if not stocks:
+        return stocks
+
+    # ── 全局风险环境判定 ──
+    vix_str = macro.get("VIX恐慌指数", "")
+    btc_str = macro.get("比特币", "")
+    vix_val = _extract_num(vix_str)
+    btc_chg = _extract_chg(btc_str)
+
+    env_risk = 0  # 0=正常, 1=偏高, 2=恶劣
+    env_warns = []
+    if vix_val and vix_val > 30:
+        env_risk = 2
+        env_warns.append(f"VIX={vix_val:.1f}恐慌")
+    elif vix_val and vix_val > 25:
+        env_risk = 1
+        env_warns.append(f"VIX={vix_val:.1f}偏高")
+    if btc_chg is not None and btc_chg < -5:
+        env_risk = max(env_risk, 1)
+        env_warns.append(f"BTC{btc_chg:+.1f}%暴跌")
+
+    # 合并所有新闻文本用于关键词匹配
+    news_text = " ".join(all_news).lower()
+
+    # ── 逐只验证 ──
+    tickers = [s["ticker"] for s in stocks]
+    price_data = _batch_verify_price(tickers)
+
+    for s in stocks:
+        ticker = s["ticker"]
+        checks_pass = 0
+        checks_fail = 0
+        verify_notes = []
+
+        # 1. 量价确认
+        pd = price_data.get(ticker, {})
+        vol_ratio = pd.get("vol_ratio", 0)
+        above_ma5 = pd.get("above_ma5", None)
+        momentum = pd.get("momentum", 0)  # 近5日涨幅
+
+        if vol_ratio >= 1.5:
+            checks_pass += 1
+            verify_notes.append(f"量比{vol_ratio:.1f}x✓")
+        elif vol_ratio > 0:
+            checks_fail += 1
+            verify_notes.append(f"量比{vol_ratio:.1f}x✗")
+
+        if above_ma5 is True:
+            checks_pass += 1
+            verify_notes.append("站上MA5✓")
+        elif above_ma5 is False:
+            checks_fail += 1
+            verify_notes.append("跌破MA5✗")
+
+        if momentum > 0:
+            checks_pass += 1
+        elif momentum < -3:
+            checks_fail += 1
+            verify_notes.append(f"5日动量{momentum:.1f}%✗")
+
+        # 2. 风险环境
+        if env_risk >= 2:
+            checks_fail += 1
+            verify_notes.append("市场恐慌✗")
+        elif env_risk == 0:
+            checks_pass += 1
+
+        # 3. 新闻利空检测
+        tk_lower = ticker.lower()
+        neg_keywords = ["lawsuit", "fraud", "sec investigation", "recall", "downgrade",
+                        "诉讼", "欺诈", "调查", "召回", "下调", "暴雷", "爆雷", "退市"]
+        has_neg = any(tk_lower in news_text and kw in news_text for kw in neg_keywords)
+        if has_neg:
+            checks_fail += 2
+            verify_notes.append("新闻利空⚠")
+        else:
+            checks_pass += 1
+
+        # ── 综合判定 ──
+        if checks_fail >= 3 or (env_risk >= 2 and checks_fail >= 2):
+            verdict = "❌否决"
+        elif checks_fail >= 2 or env_risk >= 1:
+            verdict = "⚠️存疑"
+        else:
+            verdict = "✅确认"
+
+        s["verify"] = verdict
+        s["verify_detail"] = " | ".join(verify_notes) if verify_notes else "数据不足"
+        if env_warns:
+            s["env_warn"] = "｜".join(env_warns)
+
+    return stocks
+
+
+def _extract_num(s):
+    """从 '18.50 ▲0.32%' 中提取第一个数字"""
+    m = re.search(r"([\d.]+)", s)
+    return float(m.group(1)) if m else None
+
+
+def _extract_chg(s):
+    """从 '65000.00 ▼5.20%' 中提取涨跌幅"""
+    m = re.search(r"[▲▼](\d+\.?\d*)", s)
+    if not m:
+        return None
+    val = float(m.group(1))
+    return -val if "▼" in s else val
+
+
+def _batch_verify_price(tickers):
+    """批量从 Yahoo chart 获取量价验证数据"""
+    results = {}
+
+    def _check_one(ticker):
+        try:
+            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=10d"
+            r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+            data = r.json()["chart"]["result"][0]
+            meta = data["meta"]
+            indicators = data["indicators"]["quote"][0]
+
+            closes = [c for c in (indicators.get("close") or []) if c is not None]
+            volumes = [v for v in (indicators.get("volume") or []) if v is not None]
+
+            if not closes or len(closes) < 5:
+                return ticker, {}
+
+            cur_price = closes[-1]
+            ma5 = sum(closes[-5:]) / 5
+
+            # 量比: 今日量 / 前5日均量
+            avg_vol = sum(volumes[-6:-1]) / 5 if len(volumes) >= 6 else (sum(volumes[:-1]) / max(len(volumes)-1, 1))
+            cur_vol = volumes[-1] if volumes else 0
+            vol_ratio = cur_vol / max(avg_vol, 1)
+
+            # 5日动量
+            momentum = (closes[-1] / closes[-5] - 1) * 100 if len(closes) >= 5 else 0
+
+            return ticker, {
+                "vol_ratio": vol_ratio,
+                "above_ma5": cur_price > ma5,
+                "momentum": momentum,
+                "cur_price": cur_price,
+            }
+        except Exception:
+            return ticker, {}
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = {pool.submit(_check_one, t): t for t in tickers}
+        for fut in as_completed(futures):
+            ticker, data = fut.result()
+            results[ticker] = data
+
+    return results
+
+
 def call_gemini(prompt: str) -> str:
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
@@ -419,8 +587,11 @@ def build_message(intel, analysis, short_stocks, long_stocks, top_stocks, macro,
     if short_stocks:
         out.append("━━━━ 📈 短线精选 (1-5天) ━━━━")
         for s in short_stocks:
-            out.append(f"  #{s['rank']} {s['ticker']} {s['name']}")
+            v_tag = s.get("verify", "")
+            out.append(f"  #{s['rank']} {s['ticker']} {s['name']} {v_tag}")
             out.append(f"       总分{s['score']} | {s['chg']} | 止损{s['stoploss']}")
+            if s.get("verify_detail"):
+                out.append(f"       🔍 验证: {s['verify_detail']}")
             if s.get("desc"):
                 out.append(f"       {s['desc']}")
             if s.get("tip"):
@@ -431,8 +602,11 @@ def build_message(intel, analysis, short_stocks, long_stocks, top_stocks, macro,
     if long_stocks:
         out.append("━━━━ 🏦 长线精选 (3-12月) ━━━━")
         for s in long_stocks:
-            out.append(f"  #{s['rank']} {s['ticker']} {s['name']}")
+            v_tag = s.get("verify", "")
+            out.append(f"  #{s['rank']} {s['ticker']} {s['name']} {v_tag}")
             out.append(f"       总分{s['score']} | 护城河{s['moat']}/10 | 技术{s['tech']}")
+            if s.get("verify_detail"):
+                out.append(f"       🔍 验证: {s['verify_detail']}")
             if s.get("desc"):
                 out.append(f"       {s['desc']}")
             if s.get("tip"):
@@ -443,8 +617,11 @@ def build_message(intel, analysis, short_stocks, long_stocks, top_stocks, macro,
     if top_stocks:
         out.append("━━━━ 🏆 综合TOP5 ━━━━")
         for s in top_stocks:
+            v_tag = s.get("verify", "")
             hold_tag = f"[{s.get('type','?')}] 持有:{s.get('hold','?')}"
-            out.append(f"  #{s['rank']} {s['ticker']} {s['name']} 总分{s['score']} {s['chg']} | {hold_tag}")
+            out.append(f"  #{s['rank']} {s['ticker']} {s['name']} 总分{s['score']} {s['chg']} | {hold_tag} {v_tag}")
+            if s.get("verify_detail"):
+                out.append(f"       🔍 {s['verify_detail']}")
         out.append("")
 
     hot = (intel.get("jin10",[]) + intel.get("wallstreetcn",[]) +
@@ -493,10 +670,21 @@ def main():
     short_stocks, long_stocks, top_stocks = parse_screener_full(screener_raw)
     log(f"  短线{len(short_stocks)}只 长线{len(long_stocks)}只 TOP{len(top_stocks)}只")
 
-    log("[3/5] Gemini 6问分析...")
+    log("[3/6] 多源交叉验证...")
+    all_news = (intel.get("jin10",[]) + intel.get("wallstreetcn",[]) +
+                intel.get("reuters",[]) + intel.get("wsj",[]) + intel.get("finviz",[]))
+    short_stocks = verify_stocks(short_stocks, macro, all_news)
+    long_stocks = verify_stocks(long_stocks, macro, all_news)
+    top_stocks = verify_stocks(top_stocks, macro, all_news)
+    confirmed = sum(1 for s in (short_stocks + long_stocks) if s.get("verify") == "✅确认")
+    doubted = sum(1 for s in (short_stocks + long_stocks) if s.get("verify") == "⚠️存疑")
+    rejected = sum(1 for s in (short_stocks + long_stocks) if s.get("verify") == "❌否决")
+    log(f"  验证结果: ✅确认{confirmed} ⚠️存疑{doubted} ❌否决{rejected}")
+
+    log("[4/6] Gemini 6问分析...")
     analysis = build_6q(intel, short_stocks, long_stocks, top_stocks, macro, sectors)
 
-    log("[4/5] 构建并发送飞书消息...")
+    log("[5/6] 构建并发送飞书消息...")
     msg   = build_message(intel, analysis, short_stocks, long_stocks, top_stocks, macro, sectors)
     token = get_feishu_token()
     resp  = send_feishu(token, msg)
