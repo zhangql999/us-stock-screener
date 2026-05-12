@@ -11,7 +11,6 @@ from bs4 import BeautifulSoup
 RECEIVE_ID  = "ou_d364ab80c415a76fc4de9a1667cd20d2"
 SCREENER    = "/home/ht/US_stock/stock_screener.py"
 GEMINI_KEY  = open("/home/ht/.sisyphus/gemini_key").read().strip()
-GEMINI_URL  = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_KEY}"
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -421,18 +420,44 @@ def _batch_verify_price(tickers):
     return results
 
 
+# Gemini 备用模型列表 (按优先级)
+GEMINI_MODELS = [
+    "gemini-2.0-flash",
+    "gemini-1.5-flash",
+    "gemini-1.5-flash-8b",
+]
+
 def call_gemini(prompt: str) -> str:
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {"temperature": 0.3, "maxOutputTokens": 1200}
     }
-    try:
-        r = requests.post(GEMINI_URL, json=payload, timeout=60)
-        r.raise_for_status()
-        return r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-    except Exception as e:
-        log(f"  Gemini error: {e}")
-        return None
+    for model in GEMINI_MODELS:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_KEY}"
+        for attempt in range(3):
+            try:
+                r = requests.post(url, json=payload, timeout=60)
+                if r.status_code == 429:
+                    wait = (attempt + 1) * 5  # 5s, 10s, 15s
+                    log(f"  Gemini {model} 限流(429), {wait}s后重试...")
+                    time.sleep(wait)
+                    continue
+                r.raise_for_status()
+                return r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+            except requests.exceptions.HTTPError as e:
+                if r.status_code == 429:
+                    wait = (attempt + 1) * 5
+                    log(f"  Gemini {model} 限流(429), {wait}s后重试...")
+                    time.sleep(wait)
+                    continue
+                log(f"  Gemini {model} HTTP错误: {e}")
+                break  # 非429错误, 换模型
+            except Exception as e:
+                log(f"  Gemini {model} 异常: {e}")
+                break
+        log(f"  模型 {model} 失败, 尝试下一个...")
+    log("  所有Gemini模型均失败")
+    return None
 
 def rule_based_6q(intel, top_stocks, macro, sectors):
     all_news = (intel.get("jin10",[]) + intel.get("wallstreetcn",[]) +
@@ -684,14 +709,21 @@ def main():
     log("[4/6] Gemini 6问分析...")
     analysis = build_6q(intel, short_stocks, long_stocks, top_stocks, macro, sectors)
 
-    log("[5/6] 构建并发送飞书消息...")
+    log("[5/6] 构建消息...")
     msg   = build_message(intel, analysis, short_stocks, long_stocks, top_stocks, macro, sectors)
+
+    # 终端输出完整报告
+    print("\n" + "═" * 70)
+    print(msg)
+    print("═" * 70 + "\n")
+
+    log("[6/6] 发送飞书...")
     token = get_feishu_token()
     resp  = send_feishu(token, msg)
     if resp.get("code") == 0:
-        log(f"  ✓ 成功 msg_id={resp['data']['message_id']}")
+        log(f"  ✓ 飞书发送成功 msg_id={resp['data']['message_id']}")
     else:
-        log(f"  ✗ 失败: {resp}")
+        log(f"  ✗ 飞书发送失败: {resp}")
         sys.exit(1)
 
     log("=== 完成 ===")
