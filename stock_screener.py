@@ -146,6 +146,8 @@ RISK_SHORT_INTEREST_WARN = 15      # 做空比例 > 15% 警告
 RISK_SHORT_INTEREST_DANGER = 30    # 做空比例 > 30% 高危
 RISK_INSIDER_SELL_MONTHS = 3       # 近N月 insider 大量卖出
 RISK_PE_NEGATIVE_FLAG = True       # PE为负 (亏损) 标记
+RISK_OPEX_DAYS = 3                 # 期权到期前N天内触发预警
+RISK_OPEX_OI_RATIO = 0.3           # Call OI / 日均成交量 > 30% 视为高风险
 
 # ─── 全局配置 ─────────────────────────────────────────────────────────
 TOP_N = 15  # 增加输出数量
@@ -2044,6 +2046,7 @@ def fetch_risk_signals(tickers, all_quotes):
       R4. 极高波动 (Beta > 2.5)
       R5. 市值过小 + 暴涨 (Pump & Dump 特征)
       R6. 分析师共识 "卖出"
+      R7. 期权到期踩踏 (OpEx Gamma Risk)
 
     返回 {ticker: {risk_level, risk_score, risk_signals, signal}}
     risk_level: 🟢安全 | 🟡注意 | 🟠警惕 | 🔴高危
@@ -2140,6 +2143,39 @@ def fetch_risk_signals(tickers, all_quotes):
             elif beta > 2.5:
                 risk_score += 1
                 signals.append(f"R4.Beta={beta:.1f}高波动(>2.5)")
+
+        # R7. 期权到期踩踏风险 (OpEx Gamma Unwind)
+        # 大量看涨期权临近到期 → 做市商 delta 对冲解除 → 集中抛售
+        try:
+            opt_r = yahoo.get(f"https://query2.finance.yahoo.com/v7/finance/options/{ticker}",
+                              params={"crumb": yahoo.crumb}, timeout=8)
+            if opt_r:
+                opt_data = opt_r.json().get("optionChain", {}).get("result", [{}])[0]
+                exp_dates = opt_data.get("expirationDates", [])  # Unix timestamps
+                if exp_dates:
+                    nearest_exp = datetime.utcfromtimestamp(exp_dates[0])
+                    days_to_exp = (nearest_exp - datetime.utcnow()).days
+                    if 0 <= days_to_exp <= RISK_OPEX_DAYS:
+                        # 计算该到期日的看涨期权 OI 总量
+                        opts_first = opt_data.get("options", [{}])[0]
+                        calls = opts_first.get("calls", [])
+                        total_call_oi = sum(c.get("openInterest", 0) for c in calls
+                                           if isinstance(c.get("openInterest"), (int, float)))
+                        avg_vol = q.get("averageDailyVolume3Month") or q.get("averageDailyVolume10Day", 0)
+                        if avg_vol and avg_vol > 0:
+                            oi_ratio = total_call_oi / avg_vol
+                            if oi_ratio >= RISK_OPEX_OI_RATIO * 3:  # > 90% 极高
+                                risk_score += 3
+                                signals.append(
+                                    f"R7.🔴OpEx踩踏风险! {days_to_exp}天后到期,"
+                                    f"Call OI={fmt_num(total_call_oi)}={oi_ratio:.0%}日均量")
+                            elif oi_ratio >= RISK_OPEX_OI_RATIO:  # > 30%
+                                risk_score += 2
+                                signals.append(
+                                    f"R7.⚠OpEx风险 {days_to_exp}天后到期,"
+                                    f"Call OI={fmt_num(total_call_oi)}={oi_ratio:.0%}日均量")
+        except Exception:
+            pass
 
         # R5. 小市值 + 暴涨 = Pump & Dump 特征
         mcap = q.get("marketCap", 0)
