@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-美股智能选股器 v5.0 - 长短线双轨筛选 + 量化买卖信号
+美股智能选股器 v6.0 - 八维分析 + 风险预警 + 缓存加速
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 双轨策略:
   [短线] 动量突破 + 量价配合 + 期权异动 + 关键位置
@@ -85,12 +85,67 @@ import requests
 import json
 import re
 import sys
+import os
 import time
 import math
+import hashlib
+from pathlib import Path
 from datetime import datetime, timedelta
 from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import defaultdict
+
+# ─── 分级 TTL 缓存系统 ─────────────────────────────────────────────
+CACHE_DIR = Path(__file__).parent / ".cache"
+CACHE_DIR.mkdir(exist_ok=True)
+
+# 缓存生存时间 (秒) — 按数据时效性分6级
+TTL_REALTIME   = 60           # 实时报价 (1分钟)
+TTL_INTRADAY   = 5 * 60       # 日内 K 线 / 资金流 (5分钟)
+TTL_HOURLY     = 60 * 60      # 新闻 / 分析师评级 (1小时)
+TTL_DAILY      = 2 * 3600     # 财报日历 / 龙虎榜 (2小时)
+TTL_QUARTERLY  = 24 * 3600    # 基本面 / 财报数据 (24小时)
+TTL_STATIC     = 7 * 86400    # 行业分类 / 公司简介 (7天)
+
+def _cache_key(prefix, identifier):
+    """生成缓存文件路径"""
+    safe = hashlib.md5(f"{prefix}:{identifier}".encode()).hexdigest()[:12]
+    return CACHE_DIR / f"{prefix}_{safe}.json"
+
+def cache_get(prefix, identifier, ttl):
+    """读取缓存, 过期返回 None"""
+    path = _cache_key(prefix, identifier)
+    if not path.exists():
+        return None
+    try:
+        mtime = path.stat().st_mtime
+        if time.time() - mtime > ttl:
+            return None  # 过期
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+def cache_set(prefix, identifier, data):
+    """写入缓存"""
+    path = _cache_key(prefix, identifier)
+    try:
+        path.write_text(json.dumps(data, ensure_ascii=False, default=str), encoding="utf-8")
+    except Exception:
+        pass
+
+def cache_clear():
+    """清除所有缓存"""
+    for f in CACHE_DIR.glob("*.json"):
+        f.unlink(missing_ok=True)
+
+# 环境变量 STOCK_NO_CACHE=1 可跳过缓存
+NO_CACHE = os.environ.get("STOCK_NO_CACHE", "0") == "1"
+
+# ─── 风险信号阈值 ──────────────────────────────────────────────────
+RISK_SHORT_INTEREST_WARN = 15      # 做空比例 > 15% 警告
+RISK_SHORT_INTEREST_DANGER = 30    # 做空比例 > 30% 高危
+RISK_INSIDER_SELL_MONTHS = 3       # 近N月 insider 大量卖出
+RISK_PE_NEGATIVE_FLAG = True       # PE为负 (亏损) 标记
 
 # ─── 全局配置 ─────────────────────────────────────────────────────────
 TOP_N = 15  # 增加输出数量
@@ -670,17 +725,20 @@ def init_yahoo():
 
 
 # ─── 工具函数 ────────────────────────────────────────────────────────
-def fetch(url, params=None, timeout=15):
+def fetch(url, params=None, timeout=15, retries=3):
+    """HTTP GET — 指数退避重试 (0.5s → 1s → 2s)"""
     headers = {"User-Agent": UA, "Accept-Language": "en-US,en;q=0.9"}
-    for attempt in range(2):
+    last_err = None
+    for attempt in range(retries):
         try:
             r = requests.get(url, headers=headers, params=params, timeout=timeout)
             r.raise_for_status()
             return r
         except Exception as e:
-            if attempt == 1:
-                return None
-            time.sleep(0.5)
+            last_err = e
+            if attempt < retries - 1:
+                time.sleep(0.5 * (2 ** attempt))  # 0.5, 1.0, 2.0
+    return None
 
 
 def fmt_num(n):
@@ -1383,6 +1441,12 @@ def fetch_fundamentals(tickers):
     modules = "financialData,defaultKeyStatistics,summaryDetail,earningsTrend,assetProfile"
 
     def evaluate(ticker):
+        # 缓存命中: 基本面数据变化慢, 24小时缓存
+        if not NO_CACHE:
+            cached = cache_get("fund", ticker, TTL_QUARTERLY)
+            if cached:
+                return cached
+
         data = yahoo.summary(ticker, modules)
         if not data:
             return None
@@ -1539,7 +1603,7 @@ def fetch_fundamentals(tickers):
         flags["beta"] = beta
         flags["profit_margin"] = profit_margin
 
-        return {
+        result = {
             "ticker": ticker,
             "moat_score": round(score, 1),
             "moat_details": details,
@@ -1548,6 +1612,9 @@ def fetch_fundamentals(tickers):
             "earnings_growth": earnings_growth,
             "signal": " | ".join(details),
         }
+        if not NO_CACHE:
+            cache_set("fund", ticker, result)
+        return result
 
     # 并行评估
     with ThreadPoolExecutor(max_workers=6) as pool:
@@ -1581,10 +1648,27 @@ def fetch_technicals(tickers):
     results = {}
 
     def analyze(ticker):
+        # 缓存命中: 技术数据日内缓存 (5分钟)
+        if not NO_CACHE:
+            cached_w = cache_get("chart_w", ticker, TTL_INTRADAY)
+            cached_d = cache_get("chart_d", ticker, TTL_INTRADAY)
+        else:
+            cached_w, cached_d = None, None
+
         # 获取周线数据 (趋势)
-        weekly = yahoo.chart(ticker, range_="1y", interval="1wk")
+        weekly = cached_w or yahoo.chart(ticker, range_="1y", interval="1wk")
         # 获取日线数据 (精确入场)
-        daily = yahoo.chart(ticker, range_="6mo", interval="1d")
+        daily = cached_d or yahoo.chart(ticker, range_="6mo", interval="1d")
+
+        if not weekly or not daily:
+            return None
+
+        # 缓存 chart 数据
+        if not NO_CACHE:
+            if not cached_w and weekly:
+                cache_set("chart_w", ticker, weekly)
+            if not cached_d and daily:
+                cache_set("chart_d", ticker, daily)
 
         if not weekly or not daily:
             return None
@@ -1949,11 +2033,175 @@ def fetch_money_flow(tickers, all_quotes):
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# 模块 8: 风险信号检测 ⚠️
+# ═══════════════════════════════════════════════════════════════════════
+def fetch_risk_signals(tickers, all_quotes):
+    """
+    风险信号检测 (美股版):
+      R1. 做空比例异常 (Short Interest > 15%/30%)
+      R2. Insider 大量卖出 (近3月 insider 净卖出)
+      R3. 基本面亏损 (PE为负, 收入下滑)
+      R4. 极高波动 (Beta > 2.5)
+      R5. 市值过小 + 暴涨 (Pump & Dump 特征)
+      R6. 分析师共识 "卖出"
+
+    返回 {ticker: {risk_level, risk_score, risk_signals, signal}}
+    risk_level: 🟢安全 | 🟡注意 | 🟠警惕 | 🔴高危
+    """
+    print("\n[8/8] 风险信号检测 ...")
+    results = {}
+
+    def analyze_risk(ticker):
+        """针对单只股票的风险分析"""
+        signals = []
+        risk_score = 0  # 越高越危险
+
+        # ── 从缓存/Yahoo获取 key stats ──
+        cached = cache_get("risk", ticker, TTL_DAILY) if not NO_CACHE else None
+        if cached:
+            return cached
+
+        q = all_quotes.get(ticker, {})
+
+        # R1. 做空比例 (从 Finviz 获取)
+        short_float = None
+        try:
+            r = fetch(f"https://finviz.com/quote.ashx", params={"t": ticker}, timeout=8)
+            if r:
+                soup = BeautifulSoup(r.text, "lxml")
+                for row in soup.select("table.snapshot-table2 tr"):
+                    tds = row.find_all("td")
+                    for i, td in enumerate(tds):
+                        txt = td.get_text(strip=True)
+                        if txt == "Short Float" and i + 1 < len(tds):
+                            sf_str = tds[i + 1].get_text(strip=True).replace("%", "")
+                            try:
+                                short_float = float(sf_str)
+                            except (ValueError, TypeError):
+                                pass
+                        elif txt == "Insider Trans" and i + 1 < len(tds):
+                            # R2. Insider 交易 (负值=净卖出)
+                            it_str = tds[i + 1].get_text(strip=True).replace("%", "")
+                            try:
+                                insider_trans = float(it_str)
+                                if insider_trans < -20:
+                                    risk_score += 3
+                                    signals.append(f"R2.⚠内部人净卖出{insider_trans:.1f}%(>20%)")
+                                elif insider_trans < -5:
+                                    risk_score += 1
+                                    signals.append(f"R2.内部人净卖出{insider_trans:.1f}%")
+                            except (ValueError, TypeError):
+                                pass
+                        elif txt == "Recom" and i + 1 < len(tds):
+                            # R6. 分析师共识 (1=强买, 5=强卖)
+                            try:
+                                recom = float(tds[i + 1].get_text(strip=True))
+                                if recom >= 4.0:
+                                    risk_score += 2
+                                    signals.append(f"R6.⚠分析师共识偏卖({recom:.1f}/5)")
+                                elif recom >= 3.5:
+                                    risk_score += 1
+                                    signals.append(f"R6.分析师评级中性({recom:.1f}/5)")
+                            except (ValueError, TypeError):
+                                pass
+        except Exception:
+            pass
+
+        if short_float is not None:
+            if short_float >= RISK_SHORT_INTEREST_DANGER:
+                risk_score += 4
+                signals.append(f"R1.🔴做空比例{short_float:.1f}%极高(>{RISK_SHORT_INTEREST_DANGER}%)")
+            elif short_float >= RISK_SHORT_INTEREST_WARN:
+                risk_score += 2
+                signals.append(f"R1.⚠做空比例{short_float:.1f}%(>{RISK_SHORT_INTEREST_WARN}%)")
+            elif short_float >= 10:
+                risk_score += 1
+                signals.append(f"R1.做空{short_float:.1f}%(偏高)")
+
+        # R3. 基本面亏损 (PE为负/极高)
+        pe = q.get("trailingPE")
+        if pe is not None:
+            if pe < 0:
+                risk_score += 2
+                signals.append(f"R3.⚠PE为负({pe:.1f}),公司亏损")
+            elif pe > 100:
+                risk_score += 1
+                signals.append(f"R3.PE极高({pe:.1f}),估值泡沫风险")
+
+        # R4. 极高波动
+        # 从 Yahoo quote 获取 beta (如有)
+        summary = yahoo.summary(ticker, "defaultKeyStatistics") if yahoo else {}
+        ks = summary.get("defaultKeyStatistics", {})
+        beta = _raw(ks.get("beta"))
+        if beta is not None:
+            if beta > 3.0:
+                risk_score += 2
+                signals.append(f"R4.⚠Beta={beta:.1f}极高波动(>3.0)")
+            elif beta > 2.5:
+                risk_score += 1
+                signals.append(f"R4.Beta={beta:.1f}高波动(>2.5)")
+
+        # R5. 小市值 + 暴涨 = Pump & Dump 特征
+        mcap = q.get("marketCap", 0)
+        change = q.get("regularMarketChangePercent", 0)
+        if mcap > 0 and mcap < 2e9 and change and change > 15:
+            risk_score += 3
+            signals.append(f"R5.⚠小盘({fmt_num(mcap)})暴涨{change:.1f}%,Pump风险")
+        elif mcap > 0 and mcap < 1e9 and change and change > 10:
+            risk_score += 2
+            signals.append(f"R5.⚠微盘({fmt_num(mcap)})暴涨{change:.1f}%")
+
+        # ── 综合风险等级 ──
+        if risk_score >= 6:
+            level = "🔴高危"
+        elif risk_score >= 4:
+            level = "🟠警惕"
+        elif risk_score >= 2:
+            level = "🟡注意"
+        else:
+            level = "🟢安全"
+
+        result = {
+            "ticker": ticker,
+            "risk_level": level,
+            "risk_score": risk_score,
+            "risk_signals": signals,
+            "short_float": short_float,
+            "signal": f"{level} " + (" | ".join(signals) if signals else "无风险信号"),
+        }
+
+        # 写入缓存
+        if not NO_CACHE:
+            cache_set("risk", ticker, result)
+
+        return result
+
+    # 并行检测
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = {pool.submit(analyze_risk, t): t for t in tickers}
+        done = 0
+        for f in as_completed(futures):
+            res = f.result()
+            done += 1
+            if done % 10 == 0:
+                print(f"  ... 已检测 {done}/{len(tickers)}")
+            if res:
+                results[res["ticker"]] = res
+                # Finviz 有反爬, 给一点延迟
+                time.sleep(0.1)
+
+    warn_count = sum(1 for r in results.values() if r["risk_score"] >= 2)
+    danger_count = sum(1 for r in results.values() if r["risk_score"] >= 6)
+    print(f"  完成 {len(results)} 只风险检测 | 需注意: {warn_count} | 高危: {danger_count}")
+    return results
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # 综合评分引擎 v5 - 长短线双轨 + 量化买卖信号
 # ═══════════════════════════════════════════════════════════════════════
-def score_and_rank(premarket, earnings, analyst, options, fundamentals, technicals, money_flow, all_quotes):
+def score_and_rank(premarket, earnings, analyst, options, fundamentals, technicals, money_flow, risk_signals, all_quotes):
     """
-    七维度综合评分 + 长短线分类 + 量化买入/卖出信号 + 持有周期建议
+    八维度综合评分 + 长短线分类 + 量化买入/卖出信号 + 持有周期建议 + 风险预警
     """
     all_tickers = set()
     all_tickers.update(premarket.keys(), earnings.keys(), analyst.keys(), options.keys())
@@ -2076,6 +2324,22 @@ def score_and_rank(premarket, earnings, analyst, options, fundamentals, technica
             score += 2
             reasons.append(f"✦ {dimensions}维信号共振")
 
+        # ── 风险信号 (扣分) ──
+        risk_data = risk_signals.get(ticker, {})
+        risk_sc = risk_data.get("risk_score", 0)
+        risk_level = risk_data.get("risk_level", "🟢安全")
+        if risk_sc >= 6:
+            score -= 5   # 高危大幅扣分
+            reasons.append(f"⛔ 风险{risk_level}: {risk_data.get('signal', '')}")
+        elif risk_sc >= 4:
+            score -= 3
+            reasons.append(f"⚠️ 风险{risk_level}: {risk_data.get('signal', '')}")
+        elif risk_sc >= 2:
+            score -= 1
+            reasons.append(f"⚠️ 风险{risk_level}: {risk_data.get('signal', '')}")
+        elif risk_data.get("risk_signals"):
+            reasons.append(f"✅ 风险{risk_level}: {risk_data.get('signal', '')}")
+
         # ── 补全长线量化信号 (需要基本面数据) ──
         t_info = technicals.get(ticker, {})
         f_info = fundamentals.get(ticker, {})
@@ -2157,6 +2421,8 @@ def score_and_rank(premarket, earnings, analyst, options, fundamentals, technica
             "short_buy_count": short_buy_n,
             "long_buy_count": long_buy_n,
             "stop_loss": t_info.get("stop_loss"),
+            "risk_level": risk_level,
+            "risk_score": risk_sc,
             **detail,
         })
 
@@ -2205,11 +2471,11 @@ def _print_rich(top_stocks, short_term, long_term, market_state):
 
     console.print()
     if narrow:
-        console.print(f"[bold cyan]美股选股 v5.0[/bold cyan] | {state_label}")
+        console.print(f"[bold cyan]美股选股 v6.0[/bold cyan] | {state_label}")
         console.print(f"[dim]{datetime.now().strftime('%Y-%m-%d %H:%M')}[/dim]")
     else:
         console.print(Panel.fit(
-            f"[bold cyan]美股智能选股 v5.0 - 长短线双轨 + 量化买卖信号[/bold cyan]\n"
+            f"[bold cyan]美股智能选股 v6.0 - 八维分析 + 风险预警 + 缓存加速[/bold cyan]\n"
             f"[dim]{datetime.now().strftime('%Y-%m-%d %H:%M')} | {state_label}[/dim]\n"
             f"[dim]短线: {SHORT_HOLD_DAYS_MIN}-{SHORT_HOLD_DAYS_MAX}天 | 长线: {LONG_HOLD_MONTHS_MIN}-{LONG_HOLD_MONTHS_MAX}月 | "
             f"短线买入≥{SHORT_BUY_MIN_SIGNALS}条 | 长线买入≥{LONG_BUY_MIN_SIGNALS}条[/dim]\n"
@@ -2367,7 +2633,7 @@ def _print_rich(top_stocks, short_term, long_term, market_state):
 
 def _print_plain(top_stocks, short_term, long_term, market_state):
     print(f"\n{'═' * 100}")
-    print(f"  美股智能选股 v5.0 - 长短线双轨 + 量化买卖信号  |  {datetime.now().strftime('%Y-%m-%d %H:%M')}  |  {market_state}")
+    print(f"  美股智能选股 v6.0 - 八维分析 + 风险预警 + 缓存加速  |  {datetime.now().strftime('%Y-%m-%d %H:%M')}  |  {market_state}")
     print(f"  短线: {SHORT_HOLD_DAYS_MIN}-{SHORT_HOLD_DAYS_MAX}天 | 长线: {LONG_HOLD_MONTHS_MIN}-{LONG_HOLD_MONTHS_MAX}月")
     print(f"  口诀: ROE>15% | 毛利>30% | 负债<60% | 现金>90% | PE合理 | MACD零上扬 | RSI 40-70 | 均线多头 | 放量突破")
     print(f"{'═' * 100}")
@@ -2417,7 +2683,7 @@ def _print_plain(top_stocks, short_term, long_term, market_state):
 # ═══════════════════════════════════════════════════════════════════════
 def main():
     print(f"\n{'━' * 60}")
-    print(f"  🔍 美股智能选股器 v5.0 - 长短线双轨 + 量化买卖信号")
+    print(f"  🔍 美股智能选股器 v6.0 - 八维分析 + 风险预警 + 缓存加速")
     print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'━' * 60}")
 
@@ -2453,14 +2719,16 @@ def main():
         fundamentals = f_fund.result()
         technicals = f_tech.result()
 
-    # ── Phase 3: 资金面分析 ──
+    # ── Phase 3: 资金面 + 风险信号 ──
     money_flow = fetch_money_flow(ticker_list, all_quotes)
+    risk_signals = fetch_risk_signals(ticker_list, all_quotes)
 
     # ── Phase 4: 综合评分 ──
     print(f"\n{'━' * 60}")
-    print("  📊 七维度综合评分 + 长短线分类")
+    print("  📊 八维度综合评分 + 长短线分类 + 风险预警")
     print(f"  盘前:{len(premarket)} | 财报:{len(earnings)} | 分析师:{len(analyst)} | "
-          f"期权:{len(options)} | 基本面:{len(fundamentals)} | 技术:{len(technicals)} | 资金:{len(money_flow)}")
+          f"期权:{len(options)} | 基本面:{len(fundamentals)} | 技术:{len(technicals)} | "
+          f"资金:{len(money_flow)} | 风险:{len(risk_signals)}")
 
     market_state = ""
     for q in all_quotes.values():
@@ -2470,7 +2738,7 @@ def main():
             break
 
     top, short_term, long_term = score_and_rank(
-        premarket, earnings, analyst, options, fundamentals, technicals, money_flow, all_quotes
+        premarket, earnings, analyst, options, fundamentals, technicals, money_flow, risk_signals, all_quotes
     )
     print_results(top, short_term, long_term, market_state)
 
