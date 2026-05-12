@@ -17,6 +17,13 @@ GITHUB_MODELS_URL = "https://models.inference.ai.azure.com/chat/completions"
 # 模型降级链: GPT-4o → GPT-4o-mini → Llama-405B
 GITHUB_MODELS = ["gpt-4o", "gpt-4o-mini", "Meta-Llama-3.1-405B-Instruct"]
 
+# Follow Builders — 中央 feed (公开, 无需 API key)
+FOLLOW_BUILDERS_FEEDS = {
+    "x":        "https://raw.githubusercontent.com/zarazhangrui/follow-builders/main/feed-x.json",
+    "podcasts": "https://raw.githubusercontent.com/zarazhangrui/follow-builders/main/feed-podcasts.json",
+    "blogs":    "https://raw.githubusercontent.com/zarazhangrui/follow-builders/main/feed-blogs.json",
+}
+
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
@@ -173,6 +180,59 @@ def fetch_calendar():
             if len(line) > 10:
                 items.append(line)
     return items[:8] or ["（暂无数据）"]
+
+def fetch_ai_builders():
+    """从 Follow Builders 中央 feed 拉取 AI 大佬动态"""
+    result = {"x_digest": [], "podcast_digest": [], "blog_digest": []}
+
+    # X/Twitter — AI Builders 最新推文
+    try:
+        r = requests.get(FOLLOW_BUILDERS_FEEDS["x"], timeout=15)
+        if r.ok:
+            data = r.json()
+            for builder in data.get("x", []):
+                name = builder.get("name", "")
+                handle = builder.get("handle", "")
+                for tweet in builder.get("tweets", [])[:2]:  # 每人最多2条
+                    text = tweet.get("text", "").replace("\n", " ")[:200]
+                    if text:
+                        result["x_digest"].append(f"@{handle} ({name}): {text}")
+    except Exception as e:
+        log(f"  AI Builders X feed: {e}")
+
+    # Podcasts — AI 播客最新一期
+    try:
+        r = requests.get(FOLLOW_BUILDERS_FEEDS["podcasts"], timeout=15)
+        if r.ok:
+            data = r.json()
+            for ep in data.get("podcasts", []):
+                title = ep.get("title", "")
+                show = ep.get("name", "")
+                summary = ep.get("summary", "") or ep.get("description", "")
+                if title:
+                    line = f"[{show}] {title}"
+                    if summary:
+                        line += f" — {summary[:150]}"
+                    result["podcast_digest"].append(line)
+    except Exception as e:
+        log(f"  AI Builders podcast feed: {e}")
+
+    # Blogs — Anthropic/OpenAI 官方博客
+    try:
+        r = requests.get(FOLLOW_BUILDERS_FEEDS["blogs"], timeout=15)
+        if r.ok:
+            data = r.json()
+            for post in data.get("blogs", []):
+                title = post.get("title", "")
+                source = post.get("name", "")
+                content = post.get("content", "")[:200] or post.get("description", "")[:200]
+                if title:
+                    result["blog_digest"].append(f"[{source}] {title}: {content}")
+    except Exception as e:
+        log(f"  AI Builders blog feed: {e}")
+
+    total = len(result["x_digest"]) + len(result["podcast_digest"]) + len(result["blog_digest"])
+    return result, total
 
 def run_screener():
     try:
@@ -538,6 +598,9 @@ def build_6q(intel, short_stocks, long_stocks, top_stocks, macro, sectors):
 【社区情报（ZeroHedge/UnusualWhales）】
 {chr(10).join(f'  {x[:150]}' for x in intel.get('x',[])[:8]) or '  暂无'}
 
+【AI Builders 动态（Karpathy/Swyx/Sam Altman等）】
+{chr(10).join(f'  {x[:150]}' for x in (intel.get('builders',{}).get('x_digest',[]) + intel.get('builders',{}).get('podcast_digest',[]))[:10]) or '  暂无'}
+
 【今日经济日历】
 {chr(10).join(f'  {x}' for x in intel.get('calendar',[])[:6]) or '  暂无'}
 
@@ -666,15 +729,34 @@ def build_message(intel, analysis, short_stocks, long_stocks, top_stocks, macro,
         out.extend(f"  · {n[:120]}" for n in hot)
         out.append("")
 
+    # AI Builders Digest
+    builders = intel.get("builders", {})
+    has_builders = any(builders.get(k) for k in ("x_digest", "podcast_digest", "blog_digest"))
+    if has_builders:
+        out.append("━━━━ 🧬 AI Builders Digest ━━━━")
+        if builders.get("x_digest"):
+            out.append("  📱 Builders on X:")
+            for t in builders["x_digest"][:8]:
+                out.append(f"    · {t[:140]}")
+        if builders.get("podcast_digest"):
+            out.append("  🎙 AI 播客:")
+            for p in builders["podcast_digest"][:4]:
+                out.append(f"    · {p[:140]}")
+        if builders.get("blog_digest"):
+            out.append("  📝 官方博客:")
+            for b in builders["blog_digest"][:3]:
+                out.append(f"    · {b[:140]}")
+        out.append("")
+
     out.append("⚠️ 数据仅供参考，不构成投资建议")
     return "\n".join(out)
 
 def main():
     log("=== 美股情报雷达启动 ===")
 
-    log("[1/5] 并发抓取多源情报...")
+    log("[1/6] 并发抓取多源情报 + AI Builders...")
     intel = {}
-    with ThreadPoolExecutor(max_workers=10) as ex:
+    with ThreadPoolExecutor(max_workers=12) as ex:
         futures = {
             ex.submit(fetch_jin10):        "jin10",
             ex.submit(fetch_wallstreetcn): "wallstreetcn",
@@ -686,6 +768,7 @@ def main():
             ex.submit(fetch_calendar):     "calendar",
             ex.submit(fetch_macro):        "_macro",
             ex.submit(fetch_sector):       "_sector",
+            ex.submit(fetch_ai_builders):  "_builders",
         }
         for fut in as_completed(futures):
             key = futures[fut]
@@ -699,6 +782,9 @@ def main():
 
     macro   = intel.pop("_macro", {})
     sectors = intel.pop("_sector", {})
+    builders_raw = intel.pop("_builders", ({}, 0))
+    builders = builders_raw[0] if isinstance(builders_raw, tuple) else builders_raw
+    intel["builders"] = builders
 
     log("[2/5] 运行量化选股...")
     screener_raw = run_screener()
