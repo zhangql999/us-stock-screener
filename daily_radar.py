@@ -234,6 +234,35 @@ def fetch_ai_builders():
     total = len(result["x_digest"]) + len(result["podcast_digest"]) + len(result["blog_digest"])
     return result, total
 
+
+def digest_builders(builders: dict) -> str:
+    """用 LLM 把 AI Builders 原始数据重混成中英双语 Digest"""
+    raw_parts = []
+    for t in builders.get("x_digest", [])[:12]:
+        raw_parts.append(f"[Tweet] {t}")
+    for p in builders.get("podcast_digest", [])[:6]:
+        raw_parts.append(f"[Podcast] {p}")
+    for b in builders.get("blog_digest", [])[:4]:
+        raw_parts.append(f"[Blog] {b}")
+    if not raw_parts:
+        return ""
+    raw_text = "\n".join(raw_parts)
+    prompt = f"""你是一位 AI 行业分析师，请将以下 AI Builders 的最新动态整理成一份精炼的中英双语 Digest。
+
+原始素材:
+{raw_text}
+
+要求:
+1. 💬 金句提炼 (Quotable Quotes): 挑出 3-5 条最有冲击力的原话/观点，保留英文原文，附中文翻译
+2. 🔑 核心观点总结 (Key Takeaways): 用 3-5 个要点概括今日 AI 圈最值得关注的趋势/事件，中英双语
+3. 📈 投资启示 (Market Implications): 这些动态对 AI 相关股票(NVDA/MSFT/GOOGL/META/AMZN等)有什么信号？1-2句话
+4. 格式紧凑，适合手机阅读，总字数控制在 600 字以内
+
+直接输出 Digest，不要加多余解释。"""
+    result = call_llm(prompt)
+    return result or ""
+
+
 def run_screener():
     try:
         res = subprocess.run(["/usr/bin/python3", SCREENER],
@@ -730,9 +759,14 @@ def build_message(intel, analysis, short_stocks, long_stocks, top_stocks, macro,
         out.append("")
 
     # AI Builders Digest
+    builders_digest = intel.get("builders_digest", "")
     builders = intel.get("builders", {})
-    has_builders = any(builders.get(k) for k in ("x_digest", "podcast_digest", "blog_digest"))
-    if has_builders:
+    if builders_digest:
+        out.append("━━━━ 🧬 AI Builders Digest ━━━━")
+        out.append(builders_digest)
+        out.append("")
+    elif any(builders.get(k) for k in ("x_digest", "podcast_digest", "blog_digest")):
+        # fallback: LLM 失败时显示原始数据
         out.append("━━━━ 🧬 AI Builders Digest ━━━━")
         if builders.get("x_digest"):
             out.append("  📱 Builders on X:")
@@ -785,6 +819,16 @@ def main():
     builders_raw = intel.pop("_builders", ({}, 0))
     builders = builders_raw[0] if isinstance(builders_raw, tuple) else builders_raw
     intel["builders"] = builders
+
+    # AI Builders 双语 Digest
+    has_builders = any(builders.get(k) for k in ("x_digest", "podcast_digest", "blog_digest"))
+    if has_builders:
+        log("  → AI Builders Digest 生成中...")
+        intel["builders_digest"] = digest_builders(builders)
+        if intel["builders_digest"]:
+            log(f"  ✓ Digest 生成完成 ({len(intel['builders_digest'])}字)")
+        else:
+            log("  ⚠ Digest 生成失败, 将使用原始数据")
 
     log("[2/5] 运行量化选股...")
     screener_raw = run_screener()
