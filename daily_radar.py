@@ -14,8 +14,8 @@ SCREENER    = "/home/ht/US_stock/stock_screener.py"
 # GitHub Models API (Copilot Pro 付费会员)
 GITHUB_TOKEN = subprocess.check_output(["gh", "auth", "token"]).decode().strip()
 GITHUB_MODELS_URL = "https://models.inference.ai.azure.com/chat/completions"
-# 模型降级链: GPT-4o → GPT-4o-mini
-GITHUB_MODELS = ["gpt-4o", "gpt-4o-mini"]
+# 模型降级链: GPT-4o → GPT-4o-mini → Llama-405B
+GITHUB_MODELS = ["gpt-4o", "gpt-4o-mini", "Meta-Llama-3.1-405B-Instruct"]
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
